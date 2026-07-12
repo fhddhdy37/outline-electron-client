@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Electron desktop client wrapper for self-hosted Outline with meeting recording experiments.",
   "private": true,
+  "author": "tukadlab",
   "main": "dist/main/index.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && npm run bundle:preload",
@@ -10,7 +11,9 @@
     "dev": "npm run build && electron .",
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "watch": "tsc -p tsconfig.json --noEmit --watch"
+    "watch": "tsc -p tsconfig.json --noEmit --watch",
+    "dist:win": "npm run build && electron-builder --win --x64",
+    "pack:win": "npm run build && electron-builder --win --dir"
   },
   "engines": {
     "node": ">=20"
@@ -18,8 +21,47 @@
   "devDependencies": {
     "@types/node": "^22.13.14",
     "electron": "^38.0.0",
+    "electron-builder": "^25.1.8",
     "esbuild": "^0.28.1",
     "typescript": "^5.8.3"
+  },
+  "build": {
+    "appId": "com.tukadlab.outline-electron-client",
+    "productName": "Outline Electron Client",
+    "asar": true,
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "protocols": [
+      {
+        "name": "Outline Electron Auth Link",
+        "schemes": [
+          "outline-electron"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Outline"
+    }
   },
   "allowScripts": {
     "electron@38.8.6": true,
