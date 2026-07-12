@@ -176,6 +176,7 @@ export class MeetingController {
       MEETING_MARKER,
       LIVE_SENTINEL,
       `${LIVE_SENTINEL}${segment.text}`,
+      false,
     );
     this.docLiveActive = this.docLiveActive || written;
   }
@@ -192,6 +193,7 @@ export class MeetingController {
       MEETING_MARKER,
       LIVE_SENTINEL,
       `- ${segment.text}\n`,
+      true,
     );
     this.docLiveActive = false;
   }
@@ -205,6 +207,7 @@ export class MeetingController {
           MEETING_MARKER,
           LIVE_SENTINEL,
           "",
+          false,
         );
         this.docLiveActive = false;
       }

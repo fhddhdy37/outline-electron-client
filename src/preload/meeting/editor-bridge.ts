@@ -241,12 +241,17 @@ export class EditorBridge {
    * the run in place, so the document shows live text without committing a
    * hyphen bullet; the final call passes a committed `- …\n` replacement (with
    * no sentinel) to close the run. Pass an empty replacement to clear it.
+   *
+   * When {@link commit} is true the text is inserted via execCommand so the
+   * editor turns "\n" into a real line break; partials keep using a raw text
+   * node so the invisible sentinel is preserved for the next in-place rewrite.
    */
   streamLiveBeforeMarker(
     target: CapturedEditorTarget | undefined,
     marker: string,
     sentinel: string,
     replacement: string,
+    commit: boolean,
   ): boolean {
     const root = this.editorRoot(target);
     if (!root) {
@@ -281,7 +286,26 @@ export class EditorBridge {
     range.deleteContents();
 
     if (replacement) {
-      range.insertNode(document.createTextNode(replacement));
+      if (commit) {
+        // Commit via execCommand so "\n" becomes a real line break; a raw text
+        // node's "\n" would be collapsed to a space by HTML whitespace rules.
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        root.focus({ preventScroll: true });
+
+        let inserted = false;
+        if (document.queryCommandSupported("insertText")) {
+          inserted = document.execCommand("insertText", false, replacement);
+        }
+        if (!inserted) {
+          range.insertNode(document.createTextNode(replacement));
+        }
+      } else {
+        // Live partials keep the invisible sentinel intact for the next
+        // in-place rewrite, so insert the raw text node directly.
+        range.insertNode(document.createTextNode(replacement));
+      }
     }
     root.dispatchEvent(
       new InputEvent("input", { bubbles: true, inputType: "insertText", data: replacement }),
