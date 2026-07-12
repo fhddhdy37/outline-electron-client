@@ -1,0 +1,25 @@
+{
+  "name": "outline-electron-client",
+  "version": "0.1.0",
+  "description": "Electron desktop client wrapper for self-hosted Outline with meeting recording experiments.",
+  "private": true,
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -p tsconfig.json --watch"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "electron": "^38.0.0",
+    "typescript": "^5.8.3"
+  },
+  "allowScripts": {
+    "electron@38.8.6": true
+  }
+}
