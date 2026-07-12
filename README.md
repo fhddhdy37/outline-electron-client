@@ -64,6 +64,41 @@ npm start
 
 Linux 컨테이너나 일부 제한된 개발 환경에서 Electron이 `chrome-sandbox` 권한 오류로 바로 종료되면, 로컬 개발 검증에 한해 `electron --no-sandbox .` 실행이 필요할 수 있습니다. 배포용 기본 설정은 sandbox를 유지하는 방향을 권장합니다.
 
+## 이메일 로그인 링크 처리
+
+Outline의 이메일 로그인 링크는 기본적으로 `https://tukadlab.ignorelist.com/...` 형태입니다. Windows에서 이 링크를 메일 앱에서 그냥 클릭하면 OS 기본 브라우저가 열리고, Electron 앱의 별도 세션에는 로그인 쿠키가 저장되지 않습니다.
+
+현재 앱은 두 가지 보완 흐름을 지원합니다.
+
+### 1. 지금 바로 쓸 수 있는 흐름
+
+1. Electron 앱에서 이메일 로그인을 요청합니다.
+2. 메일에서 Outline 로그인 링크를 우클릭해 링크 주소를 복사합니다.
+3. Electron 앱으로 돌아와 `Ctrl+Shift+L`을 누르거나 `Authentication` → `Open login link from clipboard` 메뉴를 선택합니다.
+4. 앱이 클립보드의 `https://tukadlab.ignorelist.com/...` 로그인 링크를 Electron 내부 세션으로 로드합니다.
+
+### 2. 딥링크 기반 원클릭 흐름
+
+앱은 `outline-electron://` 커스텀 프로토콜을 등록하고 다음 형태의 링크를 처리합니다.
+
+```text
+outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com%2Fauth%2Femail.callback%3F...
+```
+
+이 링크가 열리면 앱은 `url` 파라미터 안의 Outline URL이 현재 서버 origin과 같은지 검증한 뒤 Electron 창에서 로드합니다.
+
+다만 기존 Outline 서버가 계속 `https://...` 이메일 링크만 보내는 한, Windows가 해당 링크를 Electron 앱으로 자동 전달하지는 않습니다. 진짜 “메일 링크 클릭 → Electron 앱 열림”을 만들려면 다음 중 하나가 필요합니다.
+
+- Outline 서버의 이메일 로그인 링크를 `outline-electron://open?url=...` 형태로 생성하거나 중간 리다이렉트 링크로 감싸기
+- 패키징된 Windows 앱에서 MSIX App URI Handler 같은 방식으로 특정 HTTPS 도메인을 앱에 연결하기
+- 사용자가 `https` 전체 기본 앱을 Electron으로 바꾸는 방식은 시스템 전체 브라우저 동작을 깨뜨리므로 권장하지 않음
+
+개발 중 딥링크 등록 여부는 앱을 한 번 실행한 뒤 PowerShell에서 아래처럼 확인할 수 있습니다.
+
+```powershell
+Start-Process "outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com%2F"
+```
+
 ## 사용 흐름
 
 1. Electron 앱에서 Outline 문서를 엽니다.

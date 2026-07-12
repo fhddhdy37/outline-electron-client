@@ -1,7 +1,18 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, shell, session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  Menu,
+  shell,
+  session,
+} from "electron";
 import path from "node:path";
 import {
   APP_INFO_CHANNEL,
+  AUTH_LINK_PROTOCOL,
   DEFAULT_OUTLINE_URL,
   type AppInfo,
   type SystemAudioStrategy,
@@ -9,6 +20,10 @@ import {
 
 const OUTLINE_PARTITION = "persist:outline-client";
 const OUTLINE_URL_ARG = "--outline-url=";
+const OPEN_URL_ARG = "--open-url=";
+
+let mainWindow: BrowserWindow | undefined;
+let pendingLaunchUrl: string | undefined;
 
 function resolveOutlineUrl(): URL {
   const cliValue = process.argv.find((argument) => argument.startsWith(OUTLINE_URL_ARG));
@@ -51,6 +66,156 @@ function isAllowedOutlineOrigin(value?: string | null): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveAllowedOutlineUrl(value?: string | null): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(value.trim());
+    if ((parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.origin === outlineUrl.origin) {
+      return parsed.toString();
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function resolveDeepLinkTarget(value?: string | null): string | undefined {
+  const directOutlineUrl = resolveAllowedOutlineUrl(value);
+  if (directOutlineUrl) {
+    return directOutlineUrl;
+  }
+
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== `${AUTH_LINK_PROTOCOL}:`) {
+      return undefined;
+    }
+
+    const wrappedUrl = parsed.searchParams.get("url") ?? parsed.searchParams.get("target");
+    return resolveAllowedOutlineUrl(wrappedUrl);
+  } catch {
+    return undefined;
+  }
+}
+
+function findLaunchUrl(argv: string[]): string | undefined {
+  for (const argument of argv) {
+    if (argument.startsWith(OPEN_URL_ARG)) {
+      const target = resolveAllowedOutlineUrl(argument.slice(OPEN_URL_ARG.length));
+      if (target) {
+        return target;
+      }
+    }
+
+    const target = resolveDeepLinkTarget(argument);
+    if (target) {
+      return target;
+    }
+  }
+
+  return undefined;
+}
+
+function registerAuthLinkProtocol(): void {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(AUTH_LINK_PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+    return;
+  }
+
+  app.setAsDefaultProtocolClient(AUTH_LINK_PROTOCOL);
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow) {
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function openOutlineUrlInApp(targetUrl: string): void {
+  const allowedTarget = resolveAllowedOutlineUrl(targetUrl);
+  if (!allowedTarget) {
+    return;
+  }
+
+  pendingLaunchUrl = allowedTarget;
+
+  if (!mainWindow) {
+    return;
+  }
+
+  const urlToLoad = pendingLaunchUrl;
+  pendingLaunchUrl = undefined;
+  focusMainWindow();
+  void mainWindow.loadURL(urlToLoad);
+}
+
+function handlePotentialLaunchUrl(value?: string | null): boolean {
+  const target = resolveDeepLinkTarget(value);
+  if (!target) {
+    return false;
+  }
+
+  openOutlineUrlInApp(target);
+  return true;
+}
+
+function openLoginLinkFromClipboard(): void {
+  const clipboardText = clipboard.readText().trim();
+  if (handlePotentialLaunchUrl(clipboardText)) {
+    return;
+  }
+
+  const message =
+    `Clipboard does not contain an allowed ${outlineUrl.origin} login URL. ` +
+    `Copy the Outline email login link, then run this action again.`;
+
+  if (mainWindow) {
+    void dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "Cannot open login link",
+      message,
+    });
+    return;
+  }
+
+  dialog.showErrorBox("Cannot open login link", message);
+}
+
+function configureAppMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    {
+      label: "Authentication",
+      submenu: [
+        {
+          label: "Open login link from clipboard",
+          accelerator: "CommandOrControl+Shift+L",
+          click: () => openLoginLinkFromClipboard(),
+        },
+      ],
+    },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function configureOutlineSession(): Electron.Session {
@@ -117,6 +282,7 @@ function configureIpc(): void {
       appVersion: app.getVersion(),
       outlineUrl: outlineUrl.toString(),
       outlineOrigin: outlineUrl.origin,
+      authLinkProtocol: AUTH_LINK_PROTOCOL,
       platform: process.platform,
       systemAudioStrategy: systemAudioStrategy(),
     };
@@ -124,7 +290,7 @@ function configureIpc(): void {
 }
 
 function createMainWindow(outlineSession: Electron.Session): BrowserWindow {
-  const mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1440,
     height: 1000,
     minWidth: 1024,
@@ -140,7 +306,9 @@ function createMainWindow(outlineSession: Electron.Session): BrowserWindow {
     },
   });
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow = window;
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
     if (isAllowedOutlineOrigin(url)) {
       return { action: "allow" };
     }
@@ -149,7 +317,7 @@ function createMainWindow(outlineSession: Electron.Session): BrowserWindow {
     return { action: "deny" };
   });
 
-  mainWindow.webContents.on("will-navigate", (event, url) => {
+  window.webContents.on("will-navigate", (event, url) => {
     if (isAllowedOutlineOrigin(url)) {
       return;
     }
@@ -158,27 +326,61 @@ function createMainWindow(outlineSession: Electron.Session): BrowserWindow {
     shell.openExternal(url);
   });
 
-  void mainWindow.loadURL(outlineUrl.toString());
-
-  return mainWindow;
-}
-
-app.whenReady().then(() => {
-  configureIpc();
-  const outlineSession = configureOutlineSession();
-
-  createMainWindow(outlineSession);
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow(outlineSession);
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = undefined;
     }
   });
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  const initialUrl = pendingLaunchUrl ?? outlineUrl.toString();
+  pendingLaunchUrl = undefined;
+  void window.loadURL(initialUrl);
 
+  return window;
+}
+
+pendingLaunchUrl = findLaunchUrl(process.argv);
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const launchUrl = findLaunchUrl(argv);
+    if (launchUrl) {
+      openOutlineUrlInApp(launchUrl);
+      return;
+    }
+
+    focusMainWindow();
+  });
+
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    handlePotentialLaunchUrl(url);
+  });
+
+  app.whenReady().then(() => {
+    registerAuthLinkProtocol();
+    configureAppMenu();
+    configureIpc();
+    const outlineSession = configureOutlineSession();
+
+    createMainWindow(outlineSession);
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow(outlineSession);
+      } else {
+        focusMainWindow();
+      }
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+}
