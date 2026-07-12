@@ -12,6 +12,8 @@ interface MeetingControllerOptions {
   editorBridge: EditorBridge;
 }
 
+const MEETING_MARKER = "🎙 회의 녹음 중…";
+
 export class MeetingController {
   private readonly appInfo: AppInfo;
   private readonly editorBridge: EditorBridge;
@@ -24,6 +26,8 @@ export class MeetingController {
   private unsubscribeTranscript?: Unsubscribe;
   private unsubscribeStatus?: Unsubscribe;
   private transcriptSegments: TranscriptSegment[] = [];
+  private streamingActive = false;
+  private repositionHandler?: () => void;
 
   constructor(options: MeetingControllerOptions) {
     this.appInfo = options.appInfo;
@@ -31,14 +35,41 @@ export class MeetingController {
   }
 
   openFromCommand(context: SlashCommandContext): void {
-    this.activeEditorTarget = this.editorBridge.capture(context.editable);
+    if (this.recordingSession || this.streamingActive) {
+      return;
+    }
+
+    const target = this.editorBridge.capture(context.editable);
+    this.activeEditorTarget = target;
     this.ensurePanel();
+    this.panel?.setInsertVisible(false);
     this.panel?.show();
-    this.panel?.setStatus("ready", "`/회의` 감지됨");
+
+    const consumed = this.editorBridge.consumeTrigger(target, context.command.length);
+    const placeholder = `📝 회의 전사 (${this.formatTimestamp()})\n${MEETING_MARKER}`;
+    const inserted = consumed && this.editorBridge.insertAtSelection(target, placeholder);
+
+    if (inserted) {
+      this.streamingActive = true;
+      this.attachReposition(target);
+      const rect = this.editorBridge.getMarkerRect(target, MEETING_MARKER);
+      if (rect) {
+        this.panel?.positionAt(rect);
+      }
+      this.panel?.setStatus("ready", "문서에 실시간 전사 블록 생성됨");
+    } else {
+      this.panel?.setStatus(
+        "ready",
+        "`/회의` 감지됨 · 문서 삽입에 실패해 위젯에만 전사됩니다.",
+      );
+    }
+
+    void this.startRecording();
   }
 
   openManually(): void {
     this.ensurePanel();
+    this.panel?.setInsertVisible(true);
     this.panel?.show();
     this.panel?.setStatus("ready");
   }
@@ -88,6 +119,7 @@ export class MeetingController {
       this.unsubscribeTranscript = this.transcriptionProvider.onTranscript((segment) => {
         this.transcriptSegments.push(segment);
         this.panel?.appendTranscript(segment);
+        this.streamSegmentIntoDocument(segment);
         this.panel?.setCanInsert(true);
       });
       this.unsubscribeStatus = this.transcriptionProvider.onStatus((status, message) => {
@@ -107,6 +139,7 @@ export class MeetingController {
       this.panel?.setRecordingState(false);
       await this.cleanupTranscription();
       this.recordingSession = undefined;
+      this.finalizeStreaming();
     }
   }
 
@@ -121,11 +154,63 @@ export class MeetingController {
 
     await this.cleanupTranscription();
     this.recordingResult = await session.stop();
+    this.finalizeStreaming();
 
     this.panel?.setRecordingState(false);
     this.panel?.setCanDownload(this.recordingResult.blob.size > 0);
     this.panel?.setCanInsert(this.transcriptSegments.length > 0);
     this.panel?.setStatus("stopped");
+  }
+
+  private streamSegmentIntoDocument(segment: TranscriptSegment): void {
+    if (!this.streamingActive || !this.activeEditorTarget) {
+      return;
+    }
+
+    const ok = this.editorBridge.streamInsertBeforeMarker(
+      this.activeEditorTarget,
+      MEETING_MARKER,
+      `${segment.text} `,
+    );
+
+    if (ok) {
+      this.repositionHandler?.();
+    }
+  }
+
+  private finalizeStreaming(): void {
+    if (this.streamingActive && this.activeEditorTarget) {
+      this.editorBridge.removeMarker(this.activeEditorTarget, MEETING_MARKER);
+    }
+    this.streamingActive = false;
+    this.detachReposition();
+  }
+
+  private attachReposition(target: CapturedEditorTarget): void {
+    this.detachReposition();
+    this.repositionHandler = () => {
+      const rect = this.editorBridge.getMarkerRect(target, MEETING_MARKER);
+      if (rect) {
+        this.panel?.positionAt(rect);
+      }
+    };
+    window.addEventListener("scroll", this.repositionHandler, true);
+    window.addEventListener("resize", this.repositionHandler);
+  }
+
+  private detachReposition(): void {
+    if (this.repositionHandler) {
+      window.removeEventListener("scroll", this.repositionHandler, true);
+      window.removeEventListener("resize", this.repositionHandler);
+      this.repositionHandler = undefined;
+    }
+  }
+
+  private formatTimestamp(): string {
+    return new Intl.DateTimeFormat("ko-KR", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date());
   }
 
   private createTranscriptionProvider(): TranscriptionProvider {
@@ -194,6 +279,7 @@ export class MeetingController {
 
   private async closePanel(): Promise<void> {
     await this.stopRecording();
+    this.finalizeStreaming();
     this.panel?.remove();
     this.panel = undefined;
   }

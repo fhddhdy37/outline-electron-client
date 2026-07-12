@@ -8,11 +8,11 @@ export const MEETING_PANEL_STYLES = `
 
 .panel {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  left: 24px;
+  top: 24px;
   z-index: 2147483647;
-  width: 380px;
-  max-height: min(680px, calc(100vh - 48px));
+  width: 340px;
+  max-height: min(560px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
   overflow: hidden;

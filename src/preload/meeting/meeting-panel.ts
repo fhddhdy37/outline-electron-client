@@ -18,6 +18,7 @@ export interface MeetingPanelSourceState {
 
 export class MeetingPanel {
   private readonly host: HTMLDivElement;
+  private readonly panel: HTMLElement;
   private readonly statusLabel: HTMLSpanElement;
   private readonly statusDot: HTMLSpanElement;
   private readonly sourceList: HTMLDivElement;
@@ -43,7 +44,7 @@ export class MeetingPanel {
       <div class="header">
         <div class="title">
           <strong>회의 녹음</strong>
-          <span>Outline 안에서 녹음 + 실시간 전사</span>
+          <span>문서 안에서 실시간 전사</span>
         </div>
         <button class="close" type="button" aria-label="닫기">×</button>
       </div>
@@ -63,13 +64,14 @@ export class MeetingPanel {
         </div>
         <div class="warning" data-role="warning"></div>
         <div class="transcript" data-role="transcript">
-          <span class="empty">시작을 누르면 mock 실시간 전사가 여기에 표시됩니다.</span>
+          <span class="empty">전사가 문서와 이 창에 실시간으로 표시됩니다.</span>
         </div>
       </div>
     `;
 
     shadow.append(style, panel);
 
+    this.panel = panel;
     this.statusLabel = panel.querySelector("[data-role='status']") as HTMLSpanElement;
     this.statusDot = panel.querySelector(".dot") as HTMLSpanElement;
     this.sourceList = panel.querySelector("[data-role='sources']") as HTMLDivElement;
@@ -104,6 +106,35 @@ export class MeetingPanel {
 
   remove(): void {
     this.host.remove();
+  }
+
+  /** Anchors the floating widget next to the given viewport rect (the marker). */
+  positionAt(rect: DOMRect): void {
+    const width = this.panel.offsetWidth || 340;
+    const height = this.panel.offsetHeight || 320;
+    const margin = 12;
+    const gap = 10;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    let left = rect.left;
+    if (left + width + margin > vw) {
+      left = vw - width - margin;
+    }
+    left = Math.max(margin, left);
+
+    let top = rect.bottom + gap;
+    if (top + height + margin > vh) {
+      top = rect.top - height - gap;
+    }
+    top = Math.max(margin, Math.min(top, vh - height - margin));
+
+    this.panel.style.left = `${Math.round(left)}px`;
+    this.panel.style.top = `${Math.round(top)}px`;
+  }
+
+  setInsertVisible(visible: boolean): void {
+    this.insertButton.style.display = visible ? "" : "none";
   }
 
   setStatus(status: TranscriptionStatus | "ready" | "recording", message?: string): void {
