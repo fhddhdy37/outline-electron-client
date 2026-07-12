@@ -1,5 +1,5 @@
 import type { AppInfo } from "../../shared/ipc";
-import { AudioCaptureService, type RecordingResult, type RecordingSession } from "../audio/audio-capture";
+import { AudioCaptureService, type RecordingSession } from "../audio/audio-capture";
 import { MockTranscriptionProvider } from "../transcription/mock-transcription-provider";
 import { WhisperTranscriptionProvider } from "../transcription/whisper-transcription-provider";
 import type { TranscriptSegment, TranscriptionProvider, Unsubscribe } from "../transcription/types";
@@ -24,7 +24,6 @@ export class MeetingController {
   private panel?: MeetingPanel;
   private activeEditorTarget?: CapturedEditorTarget;
   private recordingSession?: RecordingSession;
-  private recordingResult?: RecordingResult;
   private transcriptionProvider?: TranscriptionProvider;
   private unsubscribeTranscript?: Unsubscribe;
   private unsubscribeStatus?: Unsubscribe;
@@ -81,7 +80,6 @@ export class MeetingController {
       onStart: () => void this.startRecording(),
       onStop: () => void this.stopRecording(),
       onInsert: () => this.insertTranscriptIntoDocument(),
-      onDownload: () => this.downloadRecording(),
       onClose: () => void this.closePanel(),
     });
   }
@@ -94,12 +92,10 @@ export class MeetingController {
     this.ensurePanel();
     this.panel?.clearTranscript();
     this.panel?.setRecordingState(true);
-    this.panel?.setCanDownload(false);
     this.panel?.setCanInsert(false);
     this.panel?.setStatus("recording", "권한 요청 중");
 
     try {
-      this.recordingResult = undefined;
       this.transcriptSegments = [];
 
       this.recordingSession = await this.audioCapture.start({
@@ -156,7 +152,7 @@ export class MeetingController {
     this.panel?.setStatus("stopping");
 
     await this.cleanupTranscription();
-    this.recordingResult = await session.stop();
+    await session.stop();
     this.finalizeStreaming();
 
     // Recording finished — the transcript already lives in the document, so
@@ -271,20 +267,6 @@ export class MeetingController {
     const lines = this.transcriptSegments.map((segment) => `- ${segment.text}`);
 
     return `\n\n회의 전사 (${recordedAt})\n${lines.join("\n")}\n`;
-  }
-
-  private downloadRecording(): void {
-    if (!this.recordingResult || this.recordingResult.blob.size === 0) {
-      this.panel?.setError("다운로드할 녹음 파일이 없습니다.");
-      return;
-    }
-
-    const url = URL.createObjectURL(this.recordingResult.blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `outline-meeting-${new Date().toISOString().replace(/[:.]/g, "-")}.webm`;
-    anchor.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
   private async closePanel(): Promise<void> {

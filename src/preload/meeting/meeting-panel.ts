@@ -6,7 +6,6 @@ export interface MeetingPanelEvents {
   onStart(): void;
   onStop(): void;
   onInsert(): void;
-  onDownload(): void;
   onClose(): void;
 }
 
@@ -27,7 +26,6 @@ export class MeetingPanel {
   private readonly startButton: HTMLButtonElement;
   private readonly stopButton: HTMLButtonElement;
   private readonly insertButton: HTMLButtonElement;
-  private readonly downloadButton: HTMLButtonElement;
   private readonly minimizeButton: HTMLButtonElement;
   private minimized = false;
   private liveLine?: HTMLDivElement;
@@ -66,7 +64,6 @@ export class MeetingPanel {
           <button class="button primary" type="button" data-action="start">시작</button>
           <button class="button danger" type="button" data-action="stop" disabled>중지</button>
           <button class="button secondary" type="button" data-action="insert" disabled>문서에 삽입</button>
-          <button class="button secondary" type="button" data-action="download" disabled>녹음 다운로드</button>
         </div>
         <div class="warning" data-role="warning"></div>
         <div class="transcript" data-role="transcript">
@@ -86,14 +83,12 @@ export class MeetingPanel {
     this.startButton = panel.querySelector("[data-action='start']") as HTMLButtonElement;
     this.stopButton = panel.querySelector("[data-action='stop']") as HTMLButtonElement;
     this.insertButton = panel.querySelector("[data-action='insert']") as HTMLButtonElement;
-    this.downloadButton = panel.querySelector("[data-action='download']") as HTMLButtonElement;
 
     this.minimizeButton = panel.querySelector(".minimize") as HTMLButtonElement;
 
     this.startButton.addEventListener("click", events.onStart);
     this.stopButton.addEventListener("click", events.onStop);
     this.insertButton.addEventListener("click", events.onInsert);
-    this.downloadButton.addEventListener("click", events.onDownload);
     this.minimizeButton.addEventListener("click", () => this.toggleMinimize());
     panel.querySelector(".close")?.addEventListener("click", events.onClose);
 
@@ -151,10 +146,6 @@ export class MeetingPanel {
 
   setCanInsert(canInsert: boolean): void {
     this.insertButton.disabled = !canInsert;
-  }
-
-  setCanDownload(canDownload: boolean): void {
-    this.downloadButton.disabled = !canDownload;
   }
 
   clearTranscript(): void {
