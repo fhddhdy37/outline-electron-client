@@ -17,6 +17,7 @@ import {
   type AppInfo,
   type SystemAudioStrategy,
 } from "../shared/ipc";
+import { deriveServiceUrl } from "../shared/endpoints";
 
 const OUTLINE_PARTITION = "persist:outline-client";
 const OUTLINE_URL_ARG = "--outline-url=";
@@ -73,11 +74,8 @@ function resolveSttUrl(): string {
     return parsed.toString();
   }
 
-  // Default: the /stt route on the same gateway that serves Outline.
-  const derived = new URL(outlineUrl.origin);
-  derived.protocol = derived.protocol === "https:" ? "wss:" : "ws:";
-  derived.pathname = "/stt";
-  return derived.toString();
+  // Default: the stt route on the same gateway that serves Outline.
+  return deriveServiceUrl(outlineUrl.origin, "stt");
 }
 
 const sttUrl = resolveSttUrl();

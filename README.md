@@ -27,13 +27,12 @@ outline-electron-client/
 │   │       ├── whisper-transcription-provider.ts
 │   │       └── types.ts
 │   └── shared/
+│       ├── endpoints.ts   # 커스텀 API 엔드포인트 단일 정의
 │       └── ipc.ts
-├── stt-server/            # faster-whisper WebSocket 전사 서버 (Docker)
-│   ├── app.py
-│   ├── requirements.txt
-│   └── Dockerfile
 └── README.md
 ```
+
+전사 서버 코드는 배포 스택과 함께 `outline-selfhost/stt-server/`에 있습니다.
 
 ## 설계 요약
 
@@ -47,9 +46,16 @@ outline-electron-client/
 - 전사 서버 주소는 기본적으로 Outline origin에서 유도됩니다 (`https://tukadlab.ignorelist.com` → `wss://tukadlab.ignorelist.com/stt`). `STT_URL` 환경변수나 `--stt-url=` 인자로 변경할 수 있고, `STT_URL=mock`이면 기존 mock provider를 사용합니다.
 - 전사 삽입은 `EditorBridge`를 통해 현재 Outline 편집 영역에 plain text로 넣는 구조입니다.
 
-## 전사 서버 (stt-server/)
+## 전사 서버 (outline-selfhost/stt-server/)
 
-`faster-whisper` 기반 WebSocket 서버입니다. 16kHz Int16 PCM을 받고, 에너지 기반 VAD로 발화 구간을 나눠 구간이 끝날 때마다 전사 결과를 JSON 세그먼트로 돌려줍니다. 배포는 `outline-selfhost/docker-compose.yaml`의 `stt` 서비스(GPU, 기본 모델 `large-v3-turbo`)로 하며, 내부 Caddy가 `/stt` 경로를 이 서비스로 라우팅합니다. 모델/장치는 `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` 환경변수로 조정합니다.
+WebSocket 전사 서버입니다. 16kHz Int16 PCM을 받고, 에너지 기반 VAD로 발화 구간을 나눠 구간이 끝날 때마다 전사 결과를 JSON 세그먼트로 돌려줍니다. 배포는 `outline-selfhost/docker-compose.yaml`의 `stt` 서비스(GPU)로 하며, 내부 Caddy가 `/stt` 경로를 이 서비스로 라우팅합니다.
+
+엔진은 `STT_ENGINE`으로 선택합니다.
+
+- `qwen3-asr` (기본): Qwen3-ASR-1.7B. 한국어 최적 추론 파라미터(`language=korean`, `max_new_tokens=512`, `temperature=0.0`, `repetition_penalty=1.0`, 한신대 IEIE 2026 포스터 연구 기반)를 기본 적용.
+- `whisper`: faster-whisper `large-v3-turbo` 폴백. `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE`로 조정.
+
+클라이언트가 사용하는 엔드포인트 경로는 `src/shared/endpoints.ts` 한 곳에 정의되어 있고, 서버 쪽 라우팅은 `outline-selfhost/gateway/Caddyfile`의 커스텀 API 라우트 섹션과 짝을 이룹니다.
 
 ## 실행 방법
 
