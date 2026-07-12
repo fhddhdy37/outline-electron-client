@@ -13,6 +13,9 @@ interface MeetingControllerOptions {
 }
 
 const MEETING_MARKER = "🎙 회의 녹음 중…";
+// Invisible separator marking the start of the in-progress (live) transcript
+// run in the document, so partials can be rewritten in place before committing.
+const LIVE_SENTINEL = "\u2063";
 
 export class MeetingController {
   private readonly appInfo: AppInfo;
@@ -27,6 +30,7 @@ export class MeetingController {
   private unsubscribeStatus?: Unsubscribe;
   private transcriptSegments: TranscriptSegment[] = [];
   private streamingActive = false;
+  private docLiveActive = false;
 
   constructor(options: MeetingControllerOptions) {
     this.appInfo = options.appInfo;
@@ -111,10 +115,15 @@ export class MeetingController {
 
       this.transcriptionProvider = this.createTranscriptionProvider();
       this.unsubscribeTranscript = this.transcriptionProvider.onTranscript((segment) => {
-        this.transcriptSegments.push(segment);
-        this.panel?.appendTranscript(segment);
-        this.streamSegmentIntoDocument(segment);
-        this.panel?.setCanInsert(true);
+        if (segment.isFinal) {
+          this.transcriptSegments.push(segment);
+          this.panel?.commitFinalTranscript(segment.text);
+          this.commitSegmentIntoDocument(segment);
+          this.panel?.setCanInsert(true);
+        } else {
+          this.panel?.renderPartialTranscript(segment.text);
+          this.renderPartialIntoDocument(segment);
+        }
       });
       this.unsubscribeStatus = this.transcriptionProvider.onStatus((status, message) => {
         this.panel?.setStatus(status, message);
@@ -156,20 +165,49 @@ export class MeetingController {
     this.panel?.setStatus("stopped");
   }
 
-  private streamSegmentIntoDocument(segment: TranscriptSegment): void {
+  private renderPartialIntoDocument(segment: TranscriptSegment): void {
     if (!this.streamingActive || !this.activeEditorTarget) {
       return;
     }
 
-    this.editorBridge.streamInsertBeforeMarker(
+    // Live text sits after the sentinel and before the marker, no hyphen yet.
+    const written = this.editorBridge.streamLiveBeforeMarker(
       this.activeEditorTarget,
       MEETING_MARKER,
+      LIVE_SENTINEL,
+      `${LIVE_SENTINEL}${segment.text}`,
+    );
+    this.docLiveActive = this.docLiveActive || written;
+  }
+
+  private commitSegmentIntoDocument(segment: TranscriptSegment): void {
+    if (!this.streamingActive || !this.activeEditorTarget) {
+      return;
+    }
+
+    // Replace the live run (if any) with the committed hyphen bullet; the lack
+    // of a sentinel in the replacement closes the run.
+    this.editorBridge.streamLiveBeforeMarker(
+      this.activeEditorTarget,
+      MEETING_MARKER,
+      LIVE_SENTINEL,
       `- ${segment.text}\n`,
     );
+    this.docLiveActive = false;
   }
 
   private finalizeStreaming(): void {
     if (this.streamingActive && this.activeEditorTarget) {
+      if (this.docLiveActive) {
+        // Drop any dangling live run that never got a committed final.
+        this.editorBridge.streamLiveBeforeMarker(
+          this.activeEditorTarget,
+          MEETING_MARKER,
+          LIVE_SENTINEL,
+          "",
+        );
+        this.docLiveActive = false;
+      }
       this.editorBridge.removeMarker(this.activeEditorTarget, MEETING_MARKER);
     }
     this.streamingActive = false;

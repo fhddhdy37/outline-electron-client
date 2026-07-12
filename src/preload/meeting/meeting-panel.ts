@@ -1,5 +1,5 @@
 import type { AppInfo } from "../../shared/ipc";
-import type { TranscriptSegment, TranscriptionStatus } from "../transcription/types";
+import type { TranscriptionStatus } from "../transcription/types";
 import { MEETING_PANEL_STYLES } from "../styles/meeting-panel-styles";
 
 export interface MeetingPanelEvents {
@@ -30,6 +30,7 @@ export class MeetingPanel {
   private readonly downloadButton: HTMLButtonElement;
   private readonly minimizeButton: HTMLButtonElement;
   private minimized = false;
+  private liveLine?: HTMLDivElement;
 
   constructor(appInfo: AppInfo, events: MeetingPanelEvents) {
     this.host = document.createElement("div");
@@ -158,20 +159,44 @@ export class MeetingPanel {
 
   clearTranscript(): void {
     this.transcript.replaceChildren();
+    this.liveLine = undefined;
     const empty = document.createElement("span");
     empty.className = "empty";
     empty.textContent = "전사 대기 중…";
     this.transcript.append(empty);
   }
 
-  appendTranscript(segment: TranscriptSegment): void {
-    const empty = this.transcript.querySelector(".empty");
-    empty?.remove();
+  /**
+   * Updates the in-progress (still-speaking) line in place. No hyphen bullet is
+   * committed yet — this is replaced on every partial until the utterance ends.
+   */
+  renderPartialTranscript(text: string): void {
+    this.transcript.querySelector(".empty")?.remove();
 
-    const line = document.createElement("div");
+    if (!this.liveLine) {
+      this.liveLine = document.createElement("div");
+      this.liveLine.className = "segment live";
+      this.liveLine.style.opacity = "0.6";
+      this.liveLine.style.fontStyle = "italic";
+      this.transcript.append(this.liveLine);
+    }
+    this.liveLine.textContent = text;
+    this.transcript.scrollTop = this.transcript.scrollHeight;
+  }
+
+  /** Commits the utterance as a finalized line once speech pauses. */
+  commitFinalTranscript(text: string): void {
+    this.transcript.querySelector(".empty")?.remove();
+
+    const line = this.liveLine ?? document.createElement("div");
     line.className = "segment";
-    line.textContent = segment.text;
-    this.transcript.append(line);
+    line.style.opacity = "";
+    line.style.fontStyle = "";
+    line.textContent = text;
+    if (!line.isConnected) {
+      this.transcript.append(line);
+    }
+    this.liveLine = undefined;
     this.transcript.scrollTop = this.transcript.scrollHeight;
   }
 

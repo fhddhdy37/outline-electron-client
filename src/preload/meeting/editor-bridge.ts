@@ -235,6 +235,74 @@ export class EditorBridge {
     return inserted;
   }
 
+  /**
+   * Maintains the in-progress ("still speaking") transcript run between an
+   * invisible {@link sentinel} and the recording marker. Every partial rewrites
+   * the run in place, so the document shows live text without committing a
+   * hyphen bullet; the final call passes a committed `- …\n` replacement (with
+   * no sentinel) to close the run. Pass an empty replacement to clear it.
+   */
+  streamLiveBeforeMarker(
+    target: CapturedEditorTarget | undefined,
+    marker: string,
+    sentinel: string,
+    replacement: string,
+  ): boolean {
+    const root = this.editorRoot(target);
+    if (!root) {
+      return false;
+    }
+
+    const markerFound = this.findMarkerNode(root, marker);
+    if (!markerFound) {
+      return false;
+    }
+
+    const selection = document.getSelection();
+    if (!selection) {
+      return false;
+    }
+
+    const savedRange =
+      selection.rangeCount > 0 && root.contains(selection.getRangeAt(0).endContainer)
+        ? selection.getRangeAt(0).cloneRange()
+        : undefined;
+
+    // The previous live run spans [sentinel, marker). Without a sentinel yet,
+    // there is nothing to delete and we insert right before the marker.
+    const sentinelFound = this.findMarkerNode(root, sentinel);
+    const range = document.createRange();
+    if (sentinelFound) {
+      range.setStart(sentinelFound.node, sentinelFound.index);
+    } else {
+      range.setStart(markerFound.node, markerFound.index);
+    }
+    range.setEnd(markerFound.node, markerFound.index);
+    range.deleteContents();
+
+    if (replacement) {
+      range.insertNode(document.createTextNode(replacement));
+    }
+    root.dispatchEvent(
+      new InputEvent("input", { bubbles: true, inputType: "insertText", data: replacement }),
+    );
+
+    if (
+      savedRange &&
+      savedRange.endContainer.isConnected &&
+      root.contains(savedRange.endContainer)
+    ) {
+      try {
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
+      } catch {
+        /* stale range after re-render — leave caret at insertion point */
+      }
+    }
+
+    return true;
+  }
+
   /** Deletes the recording marker once streaming finishes. */
   removeMarker(target: CapturedEditorTarget | undefined, marker: string): boolean {
     const root = this.editorRoot(target);

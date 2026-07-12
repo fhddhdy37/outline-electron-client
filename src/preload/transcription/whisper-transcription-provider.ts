@@ -22,6 +22,14 @@ interface ServerSegmentMessage {
   confidence?: number;
 }
 
+interface ServerPartialMessage {
+  type: "partial";
+  id: string;
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
 const PCM_WORKLET_CODE = `
 class PcmCapture extends AudioWorkletProcessor {
   constructor() {
@@ -239,6 +247,22 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
 
     if (message.type === "ready") {
       this.emitStatus("listening", "Whisper 서버 준비됨");
+      return;
+    }
+
+    if (message.type === "partial") {
+      const partial = message as ServerPartialMessage;
+      if (!partial.text) {
+        return;
+      }
+      this.emitTranscript({
+        id: partial.id,
+        text: partial.text,
+        isFinal: false,
+        startedAt: this.sessionStartedAt + partial.startMs,
+        endedAt: this.sessionStartedAt + partial.endMs,
+        provider: this.id,
+      });
       return;
     }
 
