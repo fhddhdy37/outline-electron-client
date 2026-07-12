@@ -28,7 +28,7 @@ import numpy as np
 import websockets
 from faster_whisper import WhisperModel
 
-MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3")
+MODEL_NAME = os.environ.get("WHISPER_MODEL", "large-v3-turbo")
 DEVICE = os.environ.get("WHISPER_DEVICE", "auto")
 COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE", "default")
 PORT = int(os.environ.get("STT_PORT", "8765"))
@@ -244,6 +244,10 @@ async def main():
     log.info("loading model %s (device=%s, compute=%s)", MODEL_NAME, DEVICE, COMPUTE_TYPE)
     model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
     log.info("model loaded")
+
+    # Warm up CUDA kernels so the first real segment is not slow.
+    list(model.transcribe(np.zeros(16000, dtype=np.float32), language="ko")[0])
+    log.info("model warmed up")
 
     async with websockets.serve(
         handle_connection,

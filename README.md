@@ -49,7 +49,7 @@ outline-electron-client/
 
 ## 전사 서버 (stt-server/)
 
-`faster-whisper` 기반 WebSocket 서버입니다. 16kHz Int16 PCM을 받고, 에너지 기반 VAD로 발화 구간을 나눠 구간이 끝날 때마다 전사 결과를 JSON 세그먼트로 돌려줍니다. 배포는 `outline-selfhost/docker-compose.yaml`의 `stt` 서비스(GPU, 기본 모델 `large-v3`)로 하며, 내부 Caddy가 `/stt` 경로를 이 서비스로 라우팅합니다. 모델/장치는 `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` 환경변수로 조정합니다.
+`faster-whisper` 기반 WebSocket 서버입니다. 16kHz Int16 PCM을 받고, 에너지 기반 VAD로 발화 구간을 나눠 구간이 끝날 때마다 전사 결과를 JSON 세그먼트로 돌려줍니다. 배포는 `outline-selfhost/docker-compose.yaml`의 `stt` 서비스(GPU, 기본 모델 `large-v3-turbo`)로 하며, 내부 Caddy가 `/stt` 경로를 이 서비스로 라우팅합니다. 모델/장치는 `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` 환경변수로 조정합니다.
 
 ## 실행 방법
 
@@ -117,7 +117,7 @@ Start-Process "outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com
 2. 문서 편집 영역에 `/회의`를 입력합니다.
 3. 우측 하단 회의 녹음 패널이 뜹니다.
 4. `시작`을 누르면 마이크 권한과 화면/시스템 오디오 권한을 요청합니다.
-5. 녹음 중 mock 실시간 전사가 표시됩니다.
+5. 녹음 중 자체 호스팅 Whisper 서버의 실시간 전사가 표시됩니다.
 6. `중지` 후 `문서에 삽입`을 누르면 전사 텍스트가 현재 문서 편집 위치에 삽입됩니다.
 7. `녹음 다운로드`로 mixed audio WebM 파일을 저장할 수 있습니다.
 
@@ -149,13 +149,12 @@ Start-Process "outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com
 현재 구현:
 
 - `src/preload/transcription/types.ts`: `TranscriptionProvider` 인터페이스
-- `src/preload/transcription/mock-transcription-provider.ts`: mock 구현
+- `src/preload/transcription/whisper-transcription-provider.ts`: 자체 호스팅 Whisper 서버 스트리밍 (기본)
+- `src/preload/transcription/mock-transcription-provider.ts`: mock 구현 (`STT_URL=mock`)
 
 나중에 추가하기 좋은 어댑터:
 
 - OpenAI Realtime/WebSocket provider
-- 서버 중계 WebSocket provider
-- 로컬 Whisper/Vosk provider
 - mixed audio와 mic/system separate track을 분리 업로드하는 provider
 
 ## 보안과 개인정보 UX
