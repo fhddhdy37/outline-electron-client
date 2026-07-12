@@ -159,10 +159,10 @@ export class MeetingController {
     this.recordingResult = await session.stop();
     this.finalizeStreaming();
 
-    this.panel?.setRecordingState(false);
-    this.panel?.setCanDownload(this.recordingResult.blob.size > 0);
-    this.panel?.setCanInsert(this.transcriptSegments.length > 0);
-    this.panel?.setStatus("stopped");
+    // Recording finished — the transcript already lives in the document, so
+    // dismiss the widget automatically instead of leaving it on screen.
+    this.panel?.remove();
+    this.panel = undefined;
   }
 
   private renderPartialIntoDocument(segment: TranscriptSegment): void {
