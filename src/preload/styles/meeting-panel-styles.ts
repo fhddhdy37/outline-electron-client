@@ -8,8 +8,8 @@ export const MEETING_PANEL_STYLES = `
 
 .panel {
   position: fixed;
-  left: 24px;
-  top: 24px;
+  right: 24px;
+  bottom: 24px;
   z-index: 2147483647;
   width: 340px;
   max-height: min(560px, calc(100vh - 48px));
@@ -32,6 +32,26 @@ export const MEETING_PANEL_STYLES = `
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.panel.minimized {
+  width: 260px;
+  max-height: none;
+}
+
+.panel.minimized .header {
+  border-bottom: 0;
+  padding-bottom: 16px;
+}
+
+.panel.minimized .body {
+  display: none;
+}
+
 .title {
   display: flex;
   flex-direction: column;
@@ -51,7 +71,8 @@ export const MEETING_PANEL_STYLES = `
   line-height: 16px;
 }
 
-.close {
+.close,
+.minimize {
   width: 32px;
   height: 32px;
   border: 0;
@@ -60,10 +81,16 @@ export const MEETING_PANEL_STYLES = `
   color: #64748b;
   cursor: pointer;
   font-size: 20px;
+  line-height: 1;
 }
 
-.close:hover {
+.close:hover,
+.minimize:hover {
   background: rgba(15, 23, 42, 0.08);
+}
+
+.minimize {
+  font-size: 18px;
 }
 
 .body {

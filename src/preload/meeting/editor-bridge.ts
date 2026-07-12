@@ -264,25 +264,6 @@ export class EditorBridge {
     return deleted;
   }
 
-  /** Viewport rect of the marker, used to anchor the floating widget inline. */
-  getMarkerRect(target: CapturedEditorTarget | undefined, marker: string): DOMRect | null {
-    const root = this.editorRoot(target);
-    if (!root) {
-      return null;
-    }
-
-    const found = this.findMarkerNode(root, marker);
-    if (!found) {
-      return null;
-    }
-
-    const range = document.createRange();
-    range.setStart(found.node, found.index);
-    range.setEnd(found.node, Math.min(found.index + marker.length, found.node.length));
-    const rect = range.getBoundingClientRect();
-    return rect.width === 0 && rect.height === 0 ? null : rect;
-  }
-
   private editorRoot(target: CapturedEditorTarget | undefined): HTMLElement | null {
     const editable = target?.editable;
     if (

@@ -27,7 +27,6 @@ export class MeetingController {
   private unsubscribeStatus?: Unsubscribe;
   private transcriptSegments: TranscriptSegment[] = [];
   private streamingActive = false;
-  private repositionHandler?: () => void;
 
   constructor(options: MeetingControllerOptions) {
     this.appInfo = options.appInfo;
@@ -51,11 +50,6 @@ export class MeetingController {
 
     if (inserted) {
       this.streamingActive = true;
-      this.attachReposition(target);
-      const rect = this.editorBridge.getMarkerRect(target, MEETING_MARKER);
-      if (rect) {
-        this.panel?.positionAt(rect);
-      }
       this.panel?.setStatus("ready", "문서에 실시간 전사 블록 생성됨");
     } else {
       this.panel?.setStatus(
@@ -167,15 +161,11 @@ export class MeetingController {
       return;
     }
 
-    const ok = this.editorBridge.streamInsertBeforeMarker(
+    this.editorBridge.streamInsertBeforeMarker(
       this.activeEditorTarget,
       MEETING_MARKER,
-      `${segment.text} `,
+      `- ${segment.text}\n`,
     );
-
-    if (ok) {
-      this.repositionHandler?.();
-    }
   }
 
   private finalizeStreaming(): void {
@@ -183,27 +173,6 @@ export class MeetingController {
       this.editorBridge.removeMarker(this.activeEditorTarget, MEETING_MARKER);
     }
     this.streamingActive = false;
-    this.detachReposition();
-  }
-
-  private attachReposition(target: CapturedEditorTarget): void {
-    this.detachReposition();
-    this.repositionHandler = () => {
-      const rect = this.editorBridge.getMarkerRect(target, MEETING_MARKER);
-      if (rect) {
-        this.panel?.positionAt(rect);
-      }
-    };
-    window.addEventListener("scroll", this.repositionHandler, true);
-    window.addEventListener("resize", this.repositionHandler);
-  }
-
-  private detachReposition(): void {
-    if (this.repositionHandler) {
-      window.removeEventListener("scroll", this.repositionHandler, true);
-      window.removeEventListener("resize", this.repositionHandler);
-      this.repositionHandler = undefined;
-    }
   }
 
   private formatTimestamp(): string {

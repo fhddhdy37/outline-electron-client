@@ -28,6 +28,8 @@ export class MeetingPanel {
   private readonly stopButton: HTMLButtonElement;
   private readonly insertButton: HTMLButtonElement;
   private readonly downloadButton: HTMLButtonElement;
+  private readonly minimizeButton: HTMLButtonElement;
+  private minimized = false;
 
   constructor(appInfo: AppInfo, events: MeetingPanelEvents) {
     this.host = document.createElement("div");
@@ -46,7 +48,10 @@ export class MeetingPanel {
           <strong>회의 녹음</strong>
           <span>문서 안에서 실시간 전사</span>
         </div>
-        <button class="close" type="button" aria-label="닫기">×</button>
+        <div class="header-actions">
+          <button class="minimize" type="button" aria-label="최소화">–</button>
+          <button class="close" type="button" aria-label="닫기">×</button>
+        </div>
       </div>
       <div class="body">
         <div class="status-row">
@@ -82,10 +87,13 @@ export class MeetingPanel {
     this.insertButton = panel.querySelector("[data-action='insert']") as HTMLButtonElement;
     this.downloadButton = panel.querySelector("[data-action='download']") as HTMLButtonElement;
 
+    this.minimizeButton = panel.querySelector(".minimize") as HTMLButtonElement;
+
     this.startButton.addEventListener("click", events.onStart);
     this.stopButton.addEventListener("click", events.onStop);
     this.insertButton.addEventListener("click", events.onInsert);
     this.downloadButton.addEventListener("click", events.onDownload);
+    this.minimizeButton.addEventListener("click", () => this.toggleMinimize());
     panel.querySelector(".close")?.addEventListener("click", events.onClose);
 
     this.setSources({
@@ -108,29 +116,11 @@ export class MeetingPanel {
     this.host.remove();
   }
 
-  /** Anchors the floating widget next to the given viewport rect (the marker). */
-  positionAt(rect: DOMRect): void {
-    const width = this.panel.offsetWidth || 340;
-    const height = this.panel.offsetHeight || 320;
-    const margin = 12;
-    const gap = 10;
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-
-    let left = rect.left;
-    if (left + width + margin > vw) {
-      left = vw - width - margin;
-    }
-    left = Math.max(margin, left);
-
-    let top = rect.bottom + gap;
-    if (top + height + margin > vh) {
-      top = rect.top - height - gap;
-    }
-    top = Math.max(margin, Math.min(top, vh - height - margin));
-
-    this.panel.style.left = `${Math.round(left)}px`;
-    this.panel.style.top = `${Math.round(top)}px`;
+  private toggleMinimize(): void {
+    this.minimized = !this.minimized;
+    this.panel.classList.toggle("minimized", this.minimized);
+    this.minimizeButton.textContent = this.minimized ? "▢" : "–";
+    this.minimizeButton.setAttribute("aria-label", this.minimized ? "펼치기" : "최소화");
   }
 
   setInsertVisible(visible: boolean): void {
