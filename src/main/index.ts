@@ -21,6 +21,7 @@ import {
 const OUTLINE_PARTITION = "persist:outline-client";
 const OUTLINE_URL_ARG = "--outline-url=";
 const OPEN_URL_ARG = "--open-url=";
+const STT_URL_ARG = "--stt-url=";
 
 let mainWindow: BrowserWindow | undefined;
 let pendingLaunchUrl: string | undefined;
@@ -55,6 +56,31 @@ function systemAudioStrategy(): SystemAudioStrategy {
 }
 
 const outlineUrl = resolveOutlineUrl();
+
+function resolveSttUrl(): string {
+  const cliValue = process.argv.find((argument) => argument.startsWith(STT_URL_ARG));
+  const rawValue = cliValue?.slice(STT_URL_ARG.length) ?? process.env.STT_URL;
+
+  if (rawValue === "mock") {
+    return "mock";
+  }
+
+  if (rawValue) {
+    const parsed = new URL(rawValue);
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") {
+      throw new Error(`Unsupported STT URL protocol: ${parsed.protocol}`);
+    }
+    return parsed.toString();
+  }
+
+  // Default: the /stt route on the same gateway that serves Outline.
+  const derived = new URL(outlineUrl.origin);
+  derived.protocol = derived.protocol === "https:" ? "wss:" : "ws:";
+  derived.pathname = "/stt";
+  return derived.toString();
+}
+
+const sttUrl = resolveSttUrl();
 
 function isAllowedOutlineOrigin(value?: string | null): boolean {
   if (!value) {
@@ -285,6 +311,7 @@ function configureIpc(): void {
       authLinkProtocol: AUTH_LINK_PROTOCOL,
       platform: process.platform,
       systemAudioStrategy: systemAudioStrategy(),
+      sttUrl,
     };
   });
 }

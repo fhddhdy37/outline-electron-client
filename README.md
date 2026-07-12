@@ -1,6 +1,6 @@
 # Outline Electron Client
 
-Self-hosted Outline 서버를 그대로 로드하는 Electron 데스크톱 클라이언트 실험 프로젝트입니다. 기존 `outline-selfhost/`는 수정하지 않고, Electron preload 레이어에서 `/회의` 명령 감지, 회의 녹음 패널, 마이크 + 시스템 오디오 캡처, mock 실시간 전사 구조를 제공합니다.
+Self-hosted Outline 서버를 그대로 로드하는 Electron 데스크톱 클라이언트 실험 프로젝트입니다. Outline 서버 코드는 수정하지 않고, Electron preload 레이어에서 `/회의` 명령 감지, 회의 녹음 패널, 마이크 + 시스템 오디오 캡처, 그리고 자체 호스팅 Whisper 서버(`stt-server/`)를 통한 실시간 한국어 전사를 제공합니다.
 
 ## 프로젝트 구조
 
@@ -24,9 +24,14 @@ outline-electron-client/
 │   │   │   └── meeting-panel-styles.ts
 │   │   └── transcription/
 │   │       ├── mock-transcription-provider.ts
+│   │       ├── whisper-transcription-provider.ts
 │   │       └── types.ts
 │   └── shared/
 │       └── ipc.ts
+├── stt-server/            # faster-whisper WebSocket 전사 서버 (Docker)
+│   ├── app.py
+│   ├── requirements.txt
+│   └── Dockerfile
 └── README.md
 ```
 
@@ -38,8 +43,13 @@ outline-electron-client/
 - `/회의` 감지는 `src/preload/meeting/command-detector.ts`에 격리했습니다.
 - 회의 UI는 Shadow DOM 기반 작은 패널로 주입되어 Outline 스타일과 충돌을 줄입니다.
 - 녹음은 `getUserMedia` 마이크와 `getDisplayMedia` 시스템 오디오를 Web Audio API로 믹싱합니다.
-- 전사는 `TranscriptionProvider` 인터페이스 뒤에 숨겼고, 현재는 mock provider가 chunk 단위 이벤트를 흉내 냅니다.
+- 전사는 `TranscriptionProvider` 인터페이스 뒤에 숨겼습니다. 기본 구현은 `WhisperTranscriptionProvider`로, 믹싱된 오디오를 AudioWorklet에서 16kHz Int16 PCM으로 뽑아 WebSocket으로 자체 호스팅 Whisper 서버에 스트리밍하고, 무음 구간 기준으로 확정된 세그먼트를 받아 표시합니다.
+- 전사 서버 주소는 기본적으로 Outline origin에서 유도됩니다 (`https://tukadlab.ignorelist.com` → `wss://tukadlab.ignorelist.com/stt`). `STT_URL` 환경변수나 `--stt-url=` 인자로 변경할 수 있고, `STT_URL=mock`이면 기존 mock provider를 사용합니다.
 - 전사 삽입은 `EditorBridge`를 통해 현재 Outline 편집 영역에 plain text로 넣는 구조입니다.
+
+## 전사 서버 (stt-server/)
+
+`faster-whisper` 기반 WebSocket 서버입니다. 16kHz Int16 PCM을 받고, 에너지 기반 VAD로 발화 구간을 나눠 구간이 끝날 때마다 전사 결과를 JSON 세그먼트로 돌려줍니다. 배포는 `outline-selfhost/docker-compose.yaml`의 `stt` 서비스(GPU, 기본 모델 `large-v3`)로 하며, 내부 Caddy가 `/stt` 경로를 이 서비스로 라우팅합니다. 모델/장치는 `WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE` 환경변수로 조정합니다.
 
 ## 실행 방법
 
@@ -162,7 +172,6 @@ Start-Process "outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com
 - Outline ProseMirror 구조에 맞춘 더 안정적인 삽입 adapter 작성
 - 시스템 오디오 source 선택 UI 추가
 - mic/system separate track 저장 옵션 추가
-- OpenAI 또는 로컬 Whisper provider 구현
 - 녹음 중 pause/resume, duration, 레벨 미터 추가
 - 패키징 설정과 macOS 권한 plist 구성 추가
 

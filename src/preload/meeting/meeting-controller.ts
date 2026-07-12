@@ -1,6 +1,7 @@
 import type { AppInfo } from "../../shared/ipc";
 import { AudioCaptureService, type RecordingResult, type RecordingSession } from "../audio/audio-capture";
 import { MockTranscriptionProvider } from "../transcription/mock-transcription-provider";
+import { WhisperTranscriptionProvider } from "../transcription/whisper-transcription-provider";
 import type { TranscriptSegment, TranscriptionProvider, Unsubscribe } from "../transcription/types";
 import type { SlashCommandContext } from "./command-detector";
 import { EditorBridge, type CapturedEditorTarget } from "./editor-bridge";
@@ -83,7 +84,7 @@ export class MeetingController {
         warnings: this.recordingSession.warnings,
       });
 
-      this.transcriptionProvider = new MockTranscriptionProvider();
+      this.transcriptionProvider = this.createTranscriptionProvider();
       this.unsubscribeTranscript = this.transcriptionProvider.onTranscript((segment) => {
         this.transcriptSegments.push(segment);
         this.panel?.appendTranscript(segment);
@@ -125,6 +126,14 @@ export class MeetingController {
     this.panel?.setCanDownload(this.recordingResult.blob.size > 0);
     this.panel?.setCanInsert(this.transcriptSegments.length > 0);
     this.panel?.setStatus("stopped");
+  }
+
+  private createTranscriptionProvider(): TranscriptionProvider {
+    if (this.appInfo.sttUrl === "mock") {
+      return new MockTranscriptionProvider();
+    }
+
+    return new WhisperTranscriptionProvider(this.appInfo.sttUrl);
   }
 
   private async cleanupTranscription(): Promise<void> {

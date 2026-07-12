@@ -16,5 +16,7 @@ export interface AppInfo {
   authLinkProtocol: string;
   platform: NodeJS.Platform;
   systemAudioStrategy: SystemAudioStrategy;
+  /** WebSocket URL of the self-hosted Whisper server, or "mock" for the mock provider. */
+  sttUrl: string;
 }
 
