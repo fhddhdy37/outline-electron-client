@@ -5,11 +5,12 @@
   "private": true,
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run bundle:preload",
+    "bundle:preload": "esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --external:electron --outfile=dist/preload/index.js",
     "dev": "npm run build && electron .",
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "watch": "tsc -p tsconfig.json --watch"
+    "watch": "tsc -p tsconfig.json --noEmit --watch"
   },
   "engines": {
     "node": ">=20"
@@ -17,9 +18,11 @@
   "devDependencies": {
     "@types/node": "^22.13.14",
     "electron": "^38.0.0",
+    "esbuild": "^0.28.1",
     "typescript": "^5.8.3"
   },
   "allowScripts": {
-    "electron@38.8.6": true
+    "electron@38.8.6": true,
+    "esbuild@0.28.1": true
   }
 }

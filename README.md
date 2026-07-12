@@ -62,6 +62,8 @@ npm run build
 npm start
 ```
 
+> 참고: preload는 `sandbox: true` 환경에서 로컬 파일 `require`가 불가능하므로, 빌드 시 esbuild로 `dist/preload/index.js` 단일 파일로 번들됩니다(`npm run bundle:preload`가 `build`에 포함). `tsc`만 단독 실행해 preload 출력을 덮어쓰면 preload 로드가 실패하고 `/회의` 감지가 동작하지 않으니 반드시 `npm run build`를 사용하세요.
+
 Linux 컨테이너나 일부 제한된 개발 환경에서 Electron이 `chrome-sandbox` 권한 오류로 바로 종료되면, 로컬 개발 검증에 한해 `electron --no-sandbox .` 실행이 필요할 수 있습니다. 배포용 기본 설정은 sandbox를 유지하는 방향을 권장합니다.
 
 ## 이메일 로그인 링크 처리
