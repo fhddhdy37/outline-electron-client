@@ -1,12 +1,11 @@
 import {
   app,
-  BrowserWindow,
+  BaseWindow,
   clipboard,
   desktopCapturer,
   dialog,
   ipcMain,
   Menu,
-  shell,
   session,
 } from "electron";
 import path from "node:path";
@@ -18,13 +17,15 @@ import {
   type SystemAudioStrategy,
 } from "../shared/ipc";
 import { deriveServiceUrl } from "../shared/endpoints";
+import { TabManager } from "./tab-manager";
+import { CHROME_HTML } from "./chrome-html";
 
 const OUTLINE_PARTITION = "persist:outline-client";
 const OUTLINE_URL_ARG = "--outline-url=";
 const OPEN_URL_ARG = "--open-url=";
 const STT_URL_ARG = "--stt-url=";
 
-let mainWindow: BrowserWindow | undefined;
+let tabManager: TabManager | undefined;
 let pendingLaunchUrl: string | undefined;
 
 function resolveOutlineUrl(): URL {
@@ -160,16 +161,7 @@ function registerAuthLinkProtocol(): void {
 }
 
 function focusMainWindow(): void {
-  if (!mainWindow) {
-    return;
-  }
-
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-
-  mainWindow.show();
-  mainWindow.focus();
+  tabManager?.focus();
 }
 
 function openOutlineUrlInApp(targetUrl: string): void {
@@ -178,16 +170,12 @@ function openOutlineUrlInApp(targetUrl: string): void {
     return;
   }
 
-  pendingLaunchUrl = allowedTarget;
-
-  if (!mainWindow) {
+  if (!tabManager || tabManager.isDestroyed) {
+    pendingLaunchUrl = allowedTarget;
     return;
   }
 
-  const urlToLoad = pendingLaunchUrl;
-  pendingLaunchUrl = undefined;
-  focusMainWindow();
-  void mainWindow.loadURL(urlToLoad);
+  tabManager.openUrl(allowedTarget);
 }
 
 function handlePotentialLaunchUrl(value?: string | null): boolean {
@@ -210,8 +198,8 @@ function openLoginLinkFromClipboard(): void {
     `Clipboard does not contain an allowed ${outlineUrl.origin} login URL. ` +
     `Copy the Outline email login link, then run this action again.`;
 
-  if (mainWindow) {
-    void dialog.showMessageBox(mainWindow, {
+  if (tabManager && !tabManager.isDestroyed) {
+    void dialog.showMessageBox({
       type: "warning",
       title: "Cannot open login link",
       message,
@@ -225,6 +213,21 @@ function openLoginLinkFromClipboard(): void {
 function configureAppMenu(): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
+    {
+      label: "Tab",
+      submenu: [
+        {
+          label: "New Tab",
+          accelerator: "CommandOrControl+T",
+          click: () => tabManager?.createTab(),
+        },
+        {
+          label: "Close Tab",
+          accelerator: "CommandOrControl+W",
+          click: () => tabManager?.closeActiveTab(),
+        },
+      ],
+    },
     {
       label: "Authentication",
       submenu: [
@@ -314,54 +317,23 @@ function configureIpc(): void {
   });
 }
 
-function createMainWindow(outlineSession: Electron.Session): BrowserWindow {
-  const window = new BrowserWindow({
-    width: 1440,
-    height: 1000,
-    minWidth: 1024,
-    minHeight: 720,
-    title: "Outline Desktop",
-    webPreferences: {
-      preload: path.join(__dirname, "../preload/index.js"),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-      session: outlineSession,
-    },
+function createTabbedWindow(outlineSession: Electron.Session): void {
+  tabManager = new TabManager({
+    session: outlineSession,
+    preloadPath: path.join(__dirname, "../preload/index.js"),
+    chromePreloadPath: path.join(__dirname, "../preload/chrome.js"),
+    chromeHtml: CHROME_HTML,
+    homeUrl: outlineUrl.toString(),
+    isAllowedOrigin: isAllowedOutlineOrigin,
   });
 
-  mainWindow = window;
-
-  window.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedOutlineOrigin(url)) {
-      return { action: "allow" };
-    }
-
-    shell.openExternal(url);
-    return { action: "deny" };
-  });
-
-  window.webContents.on("will-navigate", (event, url) => {
-    if (isAllowedOutlineOrigin(url)) {
-      return;
-    }
-
-    event.preventDefault();
-    shell.openExternal(url);
-  });
-
-  window.on("closed", () => {
-    if (mainWindow === window) {
-      mainWindow = undefined;
-    }
+  tabManager.baseWindow.on("closed", () => {
+    tabManager = undefined;
   });
 
   const initialUrl = pendingLaunchUrl ?? outlineUrl.toString();
   pendingLaunchUrl = undefined;
-  void window.loadURL(initialUrl);
-
-  return window;
+  tabManager.createTab(initialUrl);
 }
 
 pendingLaunchUrl = findLaunchUrl(process.argv);
@@ -392,11 +364,11 @@ if (!gotSingleInstanceLock) {
     configureIpc();
     const outlineSession = configureOutlineSession();
 
-    createMainWindow(outlineSession);
+    createTabbedWindow(outlineSession);
 
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createMainWindow(outlineSession);
+      if (!tabManager || tabManager.isDestroyed) {
+        createTabbedWindow(outlineSession);
       } else {
         focusMainWindow();
       }
