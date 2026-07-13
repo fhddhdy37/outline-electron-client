@@ -1,6 +1,6 @@
 {
   "name": "outline-electron-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Electron desktop client wrapper for self-hosted Outline with meeting recording experiments.",
   "private": true,
   "author": "tukadlab",
@@ -108,9 +108,14 @@
     "linux": {
       "category": "Office",
       "icon": "build/icon.png",
+      "maintainer": "tukadlab <tukadlab@users.noreply.github.com>",
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ]
+    },
+    "deb": {
+      "afterInstall": "build/deb-after-install.sh"
     }
   },
   "allowScripts": {
