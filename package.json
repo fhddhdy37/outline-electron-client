@@ -14,7 +14,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "watch": "tsc -p tsconfig.json --noEmit --watch",
     "dist:win": "npm run build && electron-builder --win --x64",
-    "pack:win": "npm run build && electron-builder --win --dir"
+    "pack:win": "npm run build && electron-builder --win --dir",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "pack:mac": "npm run build && electron-builder --mac --dir"
   },
   "engines": {
     "node": ">=20"
@@ -63,6 +65,43 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "Outline"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "회의 녹음을 위해 마이크에 접근합니다.",
+        "NSCameraUsageDescription": "화면/시스템 오디오 캡처를 위해 미디어 장치에 접근합니다.",
+        "NSAudioCaptureUsageDescription": "회의 녹음을 위해 시스템 오디오를 캡처합니다."
+      }
+    },
+    "dmg": {
+      "title": "Outline",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   },
   "allowScripts": {
