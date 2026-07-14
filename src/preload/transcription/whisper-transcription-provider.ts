@@ -8,6 +8,7 @@ import type {
 
 type TranscriptListener = (segment: TranscriptSegment) => void;
 type StatusListener = (status: TranscriptionStatus, message?: string) => void;
+type RelabelListener = (labels: Record<string, string>) => void;
 
 const TARGET_SAMPLE_RATE = 16000;
 const CONNECT_TIMEOUT_MS = 8000;
@@ -17,6 +18,14 @@ const DONE_TIMEOUT_MS = 20000;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10000;
 const MAX_RECONNECT_ATTEMPTS = 30;
+// After "done", keep the socket open this long to receive the offline speaker
+// diarization relabel (which runs on the whole recording and can be slow).
+const DIARIZE_WAIT_MS = 180000;
+
+interface ServerRelabelMessage {
+  type: "relabel";
+  labels: Record<string, string>;
+}
 
 interface ServerSegmentMessage {
   type: "segment";
@@ -112,6 +121,8 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
   private sampleRate = TARGET_SAMPLE_RATE;
   private reconnectTimer?: number;
   private reconnectAttempts = 0;
+  private relabelListeners = new Set<RelabelListener>();
+  private relabelTimer?: number;
 
   constructor(serverUrl: string) {
     this.serverUrl = serverUrl;
@@ -269,10 +280,20 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
       await done;
     }
 
-    socket?.close();
-    this.socket = undefined;
-    this.resolveDone = undefined;
+    // Finals are in — tear down audio immediately. Keep the socket open a bit
+    // longer so the offline diarization relabel can still arrive, then close it.
+    this.teardownAudio();
 
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      this.relabelTimer = window.setTimeout(() => this.closeSocket(), DIARIZE_WAIT_MS);
+    } else {
+      this.closeSocket();
+    }
+
+    this.emitStatus("stopped", "전사 종료");
+  }
+
+  private teardownAudio(): void {
     this.workletNode?.port.close();
     this.sourceNode?.disconnect();
     this.workletNode?.disconnect();
@@ -286,10 +307,18 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
       this.workletUrl = undefined;
     }
 
-    await this.audioContext?.close().catch(() => undefined);
+    void this.audioContext?.close().catch(() => undefined);
     this.audioContext = undefined;
+  }
 
-    this.emitStatus("stopped", "전사 종료");
+  private closeSocket(): void {
+    if (this.relabelTimer !== undefined) {
+      window.clearTimeout(this.relabelTimer);
+      this.relabelTimer = undefined;
+    }
+    this.socket?.close();
+    this.socket = undefined;
+    this.resolveDone = undefined;
   }
 
   onTranscript(listener: TranscriptListener): Unsubscribe {
@@ -300,6 +329,15 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
   onStatus(listener: StatusListener): Unsubscribe {
     this.statusListeners.add(listener);
     return () => this.statusListeners.delete(listener);
+  }
+
+  onRelabel(listener: RelabelListener): Unsubscribe {
+    this.relabelListeners.add(listener);
+    return () => this.relabelListeners.delete(listener);
+  }
+
+  private emitRelabel(labels: Record<string, string>): void {
+    this.relabelListeners.forEach((listener) => listener(labels));
   }
 
   private async createAudioContext(): Promise<AudioContext> {
@@ -367,6 +405,16 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
 
     if (message.type === "done") {
       this.resolveDone?.();
+      return;
+    }
+
+    if (message.type === "relabel") {
+      const relabel = message as unknown as ServerRelabelMessage;
+      this.emitRelabel(relabel.labels ?? {});
+      // This is the last message we were waiting for after stop.
+      if (this.stopping) {
+        this.closeSocket();
+      }
       return;
     }
 

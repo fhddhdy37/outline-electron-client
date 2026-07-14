@@ -179,19 +179,38 @@ export class MeetingPanel {
   }
 
   /** Commits the utterance as a finalized line once that speaker pauses. */
-  commitFinalTranscript(key: string, label: string | undefined, text: string): void {
+  commitFinalTranscript(
+    key: string,
+    uttId: string,
+    label: string | undefined,
+    text: string,
+  ): void {
     this.transcript.querySelector(".empty")?.remove();
 
     const line = this.liveLines.get(key) ?? document.createElement("div");
     line.className = "segment";
     line.style.opacity = "";
     line.style.fontStyle = "";
+    line.dataset.uttId = uttId;
+    line.dataset.text = text;
     line.textContent = label ? `${label}: ${text}` : text;
     if (!line.isConnected) {
       this.transcript.append(line);
     }
     this.liveLines.delete(key);
     this.transcript.scrollTop = this.transcript.scrollHeight;
+  }
+
+  /** Applies corrected speaker labels (from offline diarization) in place. */
+  relabelTranscript(labels: Record<string, string>): void {
+    for (const [uttId, label] of Object.entries(labels)) {
+      const line = this.transcript.querySelector<HTMLDivElement>(
+        `.segment[data-utt-id="${CSS.escape(uttId)}"]`,
+      );
+      if (line) {
+        line.textContent = `${label}: ${line.dataset.text ?? ""}`;
+      }
+    }
   }
 
   setSources(state: MeetingPanelSourceState): void {

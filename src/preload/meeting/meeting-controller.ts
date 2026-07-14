@@ -32,6 +32,7 @@ export class MeetingController {
   private transcriptionProvider?: TranscriptionProvider;
   private unsubscribeTranscript?: Unsubscribe;
   private unsubscribeStatus?: Unsubscribe;
+  private unsubscribeRelabel?: Unsubscribe;
   private transcriptSegments: TranscriptSegment[] = [];
   private streamingActive = false;
   private docLiveActive = false;
@@ -102,6 +103,9 @@ export class MeetingController {
 
     try {
       this.transcriptSegments = [];
+      // Drop any relabel listener still waiting from a previous recording.
+      this.unsubscribeRelabel?.();
+      this.unsubscribeRelabel = undefined;
 
       this.recordingSession = await this.audioCapture.start({
         captureSystemAudio: true,
@@ -119,7 +123,7 @@ export class MeetingController {
         const key = segment.source ?? "default";
         if (segment.isFinal) {
           this.transcriptSegments.push(segment);
-          this.panel?.commitFinalTranscript(key, segment.speaker, segment.text);
+          this.panel?.commitFinalTranscript(key, segment.id, segment.speaker, segment.text);
           this.commitSegmentIntoDocument(segment);
           this.panel?.setCanInsert(true);
         } else {
@@ -130,6 +134,9 @@ export class MeetingController {
       this.unsubscribeStatus = this.transcriptionProvider.onStatus((status, message) => {
         this.panel?.setStatus(status, message);
       });
+      this.unsubscribeRelabel = this.transcriptionProvider.onRelabel?.((labels) =>
+        this.applyRelabel(labels),
+      );
 
       await this.transcriptionProvider.start({
         // Per-speaker channels (ch0 mic / ch1 system) drive transcription; the
@@ -235,9 +242,33 @@ export class MeetingController {
     return new WhisperTranscriptionProvider(this.appInfo.sttUrl);
   }
 
+  private applyRelabel(labels: Record<string, string>): void {
+    // Panel relabels precisely by utterance id.
+    this.panel?.relabelTranscript(labels);
+
+    // Update stored segments (used by insert/download) and best-effort rewrite
+    // the committed document lines.
+    for (const segment of this.transcriptSegments) {
+      const corrected = labels[segment.id];
+      if (!corrected || corrected === segment.speaker) {
+        continue;
+      }
+      if (this.activeEditorTarget && segment.speaker) {
+        this.editorBridge.replaceFirstOccurrence(
+          this.activeEditorTarget,
+          `${segment.speaker}: ${segment.text}`,
+          `${corrected}: ${segment.text}`,
+        );
+      }
+      segment.speaker = corrected;
+    }
+  }
+
   private async cleanupTranscription(): Promise<void> {
     this.unsubscribeTranscript?.();
     this.unsubscribeStatus?.();
+    // Keep the relabel subscription alive: the offline diarization relabel
+    // arrives after stop(). It is dropped when the next recording starts.
     this.unsubscribeTranscript = undefined;
     this.unsubscribeStatus = undefined;
 

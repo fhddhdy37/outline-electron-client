@@ -400,6 +400,70 @@ export class EditorBridge {
     return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
   }
 
+  /**
+   * Replaces the first occurrence of {@link oldText} with {@link newText}.
+   * Best-effort (used to relabel a committed transcript line after diarization);
+   * only matches when the run sits within a single text node.
+   */
+  replaceFirstOccurrence(
+    target: CapturedEditorTarget | undefined,
+    oldText: string,
+    newText: string,
+  ): boolean {
+    const root = this.editorRoot(target);
+    if (!root || !oldText) {
+      return false;
+    }
+
+    const found = this.findMarkerNode(root, oldText);
+    if (!found) {
+      return false;
+    }
+
+    const selection = document.getSelection();
+    if (!selection) {
+      return false;
+    }
+
+    const savedRange =
+      selection.rangeCount > 0 && root.contains(selection.getRangeAt(0).endContainer)
+        ? selection.getRangeAt(0).cloneRange()
+        : undefined;
+
+    const range = document.createRange();
+    range.setStart(found.node, found.index);
+    range.setEnd(found.node, found.index + oldText.length);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    root.focus({ preventScroll: true });
+
+    let replaced = false;
+    if (document.queryCommandSupported("insertText")) {
+      replaced = document.execCommand("insertText", false, newText);
+    }
+    if (!replaced) {
+      range.deleteContents();
+      range.insertNode(document.createTextNode(newText));
+      replaced = true;
+    }
+    root.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: newText }));
+
+    if (
+      savedRange &&
+      savedRange.endContainer.isConnected &&
+      root.contains(savedRange.endContainer)
+    ) {
+      try {
+        selection.removeAllRanges();
+        selection.addRange(savedRange);
+      } catch {
+        /* stale range after re-render — leave caret at replacement */
+      }
+    }
+
+    return replaced;
+  }
+
   /** Deletes the recording marker once streaming finishes. */
   removeMarker(target: CapturedEditorTarget | undefined, marker: string): boolean {
     const root = this.editorRoot(target);

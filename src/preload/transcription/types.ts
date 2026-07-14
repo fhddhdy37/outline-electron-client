@@ -41,5 +41,7 @@ export interface TranscriptionProvider {
   stop(): Promise<void>;
   onTranscript(listener: (segment: TranscriptSegment) => void): Unsubscribe;
   onStatus(listener: (status: TranscriptionStatus, message?: string) => void): Unsubscribe;
+  /** Corrected speaker labels from offline diarization: { utteranceId: speaker }. */
+  onRelabel?(listener: (labels: Record<string, string>) => void): Unsubscribe;
 }
 
