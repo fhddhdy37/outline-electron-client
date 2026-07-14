@@ -25,6 +25,8 @@ export interface TabManagerOptions {
   /** URL a fresh tab opens. */
   homeUrl: string;
   isAllowedOrigin(url: string): boolean;
+  /** Invoked on Ctrl/Cmd+Shift+L (load login link from clipboard). */
+  onLoginLinkShortcut?: () => void;
 }
 
 /**
@@ -137,6 +139,19 @@ export class TabManager {
     this.broadcast();
   }
 
+  /** Move the active tab by `direction` (+1 next, -1 previous), wrapping around. */
+  cycleTab(direction: 1 | -1): void {
+    if (this.tabs.length < 2) {
+      return;
+    }
+    const index = this.tabs.findIndex((tab) => tab.id === this.activeId);
+    if (index === -1) {
+      return;
+    }
+    const nextIndex = (index + direction + this.tabs.length) % this.tabs.length;
+    this.activate(this.tabs[nextIndex].id);
+  }
+
   closeTab(id: number): void {
     const index = this.tabs.findIndex((tab) => tab.id === id);
     if (index === -1) {
@@ -199,13 +214,28 @@ export class TabManager {
   }
 
   private handleShortcut(event: Electron.Event, input: Electron.Input): void {
+    if (input.type !== "keyDown") {
+      return;
+    }
+
+    // Ctrl+Tab / Ctrl+Shift+Tab cycles tabs. Uses Ctrl on every platform since
+    // Cmd+Tab is the macOS application switcher.
+    if (input.control && input.key === "Tab") {
+      event.preventDefault();
+      this.cycleTab(input.shift ? -1 : 1);
+      return;
+    }
+
     const modifier = process.platform === "darwin" ? input.meta : input.control;
-    if (!modifier || input.type !== "keyDown") {
+    if (!modifier) {
       return;
     }
 
     const key = input.key.toLowerCase();
-    if (key === "t") {
+    if (key === "l" && input.shift) {
+      event.preventDefault();
+      this.options.onLoginLinkShortcut?.();
+    } else if (key === "t") {
       event.preventDefault();
       this.createTab();
     } else if (key === "w") {

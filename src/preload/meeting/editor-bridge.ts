@@ -273,6 +273,11 @@ export class EditorBridge {
         ? selection.getRangeAt(0).cloneRange()
         : undefined;
 
+    // Pin the viewport before mutating: ProseMirror scrolls every change into
+    // view, which would yank the reader back to the transcript. Capturing here
+    // and restoring after lets scrolling stay under the user's control.
+    const restoreScroll = this.captureScroll(root, markerFound, marker);
+
     // The previous live run spans [sentinel, marker). Without a sentinel yet,
     // there is nothing to delete and we insert right before the marker.
     const sentinelFound = this.findMarkerNode(root, sentinel);
@@ -324,7 +329,75 @@ export class EditorBridge {
       }
     }
 
+    // Restore across every stage the editor might scroll in — synchronously,
+    // after ProseMirror's MutationObserver microtask, and before the next
+    // paint — so the correction lands without a visible jump.
+    restoreScroll();
+    queueMicrotask(restoreScroll);
+    requestAnimationFrame(restoreScroll);
+
     return true;
+  }
+
+  /**
+   * Snapshots the editor's scroll position before a mutation and returns a
+   * function that puts it back. When the insertion anchor sits above the
+   * viewport, the height the mutation adds is compensated so the reader's
+   * content stays visually fixed rather than shifting by the inserted lines.
+   */
+  private captureScroll(
+    root: HTMLElement,
+    markerFound: { node: Text; index: number },
+    marker: string,
+  ): () => void {
+    const scroller = this.findScrollContainer(root);
+    if (!scroller) {
+      return () => undefined;
+    }
+
+    const prevTop = scroller.scrollTop;
+    const prevLeft = scroller.scrollLeft;
+    const prevHeight = scroller.scrollHeight;
+
+    let anchorAbove = false;
+    const markerRange = document.createRange();
+    markerRange.setStart(markerFound.node, markerFound.index);
+    markerRange.setEnd(
+      markerFound.node,
+      Math.min(markerFound.index + marker.length, markerFound.node.length),
+    );
+    const markerRect = markerRange.getBoundingClientRect();
+    if (markerRect.height > 0 || markerRect.width > 0) {
+      anchorAbove = markerRect.bottom <= scroller.getBoundingClientRect().top;
+    }
+
+    return () => {
+      const targetTop = anchorAbove
+        ? prevTop + (scroller.scrollHeight - prevHeight)
+        : prevTop;
+      if (Math.abs(scroller.scrollTop - targetTop) > 0.5) {
+        scroller.scrollTop = targetTop;
+      }
+      if (Math.abs(scroller.scrollLeft - prevLeft) > 0.5) {
+        scroller.scrollLeft = prevLeft;
+      }
+    };
+  }
+
+  /** Nearest scrollable ancestor of the editor, falling back to the page. */
+  private findScrollContainer(el: HTMLElement): HTMLElement | null {
+    let node: HTMLElement | null = el;
+    while (node && node !== document.body && node !== document.documentElement) {
+      const style = window.getComputedStyle(node);
+      if (
+        (style.overflowY === "auto" || style.overflowY === "scroll" || style.overflowY === "overlay") &&
+        node.scrollHeight > node.clientHeight
+      ) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
   }
 
   /** Deletes the recording marker once streaming finishes. */

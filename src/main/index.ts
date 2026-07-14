@@ -211,38 +211,11 @@ function openLoginLinkFromClipboard(): void {
 }
 
 function configureAppMenu(): void {
-  const template: Electron.MenuItemConstructorOptions[] = [
-    ...(process.platform === "darwin" ? [{ role: "appMenu" as const }] : []),
-    {
-      label: "Tab",
-      submenu: [
-        {
-          label: "New Tab",
-          accelerator: "CommandOrControl+T",
-          click: () => tabManager?.createTab(),
-        },
-        {
-          label: "Close Tab",
-          accelerator: "CommandOrControl+W",
-          click: () => tabManager?.closeActiveTab(),
-        },
-      ],
-    },
-    {
-      label: "Authentication",
-      submenu: [
-        {
-          label: "Open login link from clipboard",
-          accelerator: "CommandOrControl+Shift+L",
-          click: () => openLoginLinkFromClipboard(),
-        },
-      ],
-    },
-    { role: "viewMenu" },
-    { role: "windowMenu" },
-  ];
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  // No application menu bar — the app uses its own tab-bar chrome. Keyboard
+  // shortcuts that lived in the menu are handled directly by TabManager:
+  // Ctrl/Cmd+T (new tab), Ctrl/Cmd+W (close tab), and Ctrl/Cmd+Shift+L
+  // (load login link from clipboard, via onLoginLinkShortcut).
+  Menu.setApplicationMenu(null);
 }
 
 function configureOutlineSession(): Electron.Session {
@@ -325,6 +298,7 @@ function createTabbedWindow(outlineSession: Electron.Session): void {
     chromeHtml: CHROME_HTML,
     homeUrl: outlineUrl.toString(),
     isAllowedOrigin: isAllowedOutlineOrigin,
+    onLoginLinkShortcut: openLoginLinkFromClipboard,
   });
 
   tabManager.baseWindow.on("closed", () => {
