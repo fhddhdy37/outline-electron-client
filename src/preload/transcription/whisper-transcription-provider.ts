@@ -12,6 +12,11 @@ type StatusListener = (status: TranscriptionStatus, message?: string) => void;
 const TARGET_SAMPLE_RATE = 16000;
 const CONNECT_TIMEOUT_MS = 8000;
 const DONE_TIMEOUT_MS = 20000;
+// Auto-reconnect on an unexpected socket close so a server blip or restart does
+// not end the meeting. The audio pipeline stays up; only the socket is remade.
+const RECONNECT_BASE_MS = 500;
+const RECONNECT_MAX_MS = 10000;
+const MAX_RECONNECT_ATTEMPTS = 30;
 
 interface ServerSegmentMessage {
   type: "segment";
@@ -87,6 +92,10 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
   private sessionStartedAt = 0;
   private stopping = false;
   private resolveDone?: () => void;
+  private language = "ko";
+  private sampleRate = TARGET_SAMPLE_RATE;
+  private reconnectTimer?: number;
+  private reconnectAttempts = 0;
 
   constructor(serverUrl: string) {
     this.serverUrl = serverUrl;
@@ -95,11 +104,56 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
   async start(input: TranscriptionInput): Promise<void> {
     this.sessionStartedAt = Date.now();
     this.stopping = false;
-    this.emitStatus("connecting", "Whisper 서버 연결 중");
+    this.language = input.language;
+    this.reconnectAttempts = 0;
+
+    // The audio pipeline is built once and survives socket reconnects — only the
+    // WebSocket is torn down and remade if the server blips.
+    const audioContext = await this.createAudioContext();
+    this.audioContext = audioContext;
+    this.sampleRate = audioContext.sampleRate;
+
+    this.workletUrl = URL.createObjectURL(
+      new Blob([PCM_WORKLET_CODE], { type: "application/javascript" }),
+    );
+    await audioContext.audioWorklet.addModule(this.workletUrl);
+
+    this.sourceNode = audioContext.createMediaStreamSource(input.audioStream);
+    this.workletNode = new AudioWorkletNode(audioContext, "pcm-capture", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+      channelCountMode: "explicit",
+      channelInterpretation: "speakers",
+    });
+
+    this.workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+      const socket = this.socket;
+      if (socket && socket.readyState === WebSocket.OPEN && !this.stopping) {
+        socket.send(floatToInt16(event.data).buffer);
+      }
+      // While reconnecting there is no open socket; that audio is dropped and
+      // capture resumes once the connection is back.
+    };
+
+    // A rendered graph is required for the worklet to be pulled; keep it silent.
+    this.muteGain = audioContext.createGain();
+    this.muteGain.gain.value = 0;
+    this.sourceNode.connect(this.workletNode);
+    this.workletNode.connect(this.muteGain);
+    this.muteGain.connect(audioContext.destination);
+
+    // Initial connection is awaited so a start failure surfaces to the caller.
+    await this.connectSocket(true);
+    this.emitStatus("listening", "Whisper 서버로 스트리밍 중");
+  }
+
+  /** Opens a socket and (re)starts the server-side session on it. */
+  private async connectSocket(initial: boolean): Promise<void> {
+    this.emitStatus("connecting", initial ? "Whisper 서버 연결 중" : "서버 재연결 중");
 
     const socket = new WebSocket(this.serverUrl);
     socket.binaryType = "arraybuffer";
-    this.socket = socket;
 
     await new Promise<void>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
@@ -125,52 +179,53 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
       );
     });
 
+    this.socket = socket;
     socket.addEventListener("message", (event) => this.handleServerMessage(event));
     socket.addEventListener("close", () => {
-      if (!this.stopping) {
-        this.emitStatus("error", "Whisper 서버 연결이 끊어졌습니다.");
+      if (this.stopping) {
+        return;
       }
+      if (this.socket === socket) {
+        this.socket = undefined;
+      }
+      this.scheduleReconnect();
     });
-
-    const audioContext = await this.createAudioContext();
-    this.audioContext = audioContext;
 
     socket.send(
       JSON.stringify({
         type: "start",
-        sampleRate: audioContext.sampleRate,
-        language: input.language,
+        sampleRate: this.sampleRate,
+        language: this.language,
       }),
     );
+  }
 
-    this.workletUrl = URL.createObjectURL(
-      new Blob([PCM_WORKLET_CODE], { type: "application/javascript" }),
-    );
-    await audioContext.audioWorklet.addModule(this.workletUrl);
+  private scheduleReconnect(): void {
+    if (this.stopping || this.reconnectTimer !== undefined) {
+      return;
+    }
+    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      this.emitStatus("error", "Whisper 서버 재연결 실패");
+      return;
+    }
 
-    this.sourceNode = audioContext.createMediaStreamSource(input.audioStream);
-    this.workletNode = new AudioWorkletNode(audioContext, "pcm-capture", {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 1,
-      channelCountMode: "explicit",
-      channelInterpretation: "speakers",
-    });
+    const attempt = this.reconnectAttempts;
+    this.reconnectAttempts += 1;
+    const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+    this.emitStatus("connecting", `서버 재연결 중… (${attempt + 1})`);
 
-    this.workletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
-      if (socket.readyState === WebSocket.OPEN && !this.stopping) {
-        socket.send(floatToInt16(event.data).buffer);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = undefined;
+      if (this.stopping) {
+        return;
       }
-    };
-
-    // A rendered graph is required for the worklet to be pulled; keep it silent.
-    this.muteGain = audioContext.createGain();
-    this.muteGain.gain.value = 0;
-    this.sourceNode.connect(this.workletNode);
-    this.workletNode.connect(this.muteGain);
-    this.muteGain.connect(audioContext.destination);
-
-    this.emitStatus("listening", "Whisper 서버로 스트리밍 중");
+      this.connectSocket(false)
+        .then(() => {
+          this.reconnectAttempts = 0;
+          this.emitStatus("listening", "서버 재연결됨");
+        })
+        .catch(() => this.scheduleReconnect());
+    }, delay);
   }
 
   async stop(): Promise<void> {
@@ -179,6 +234,11 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
     }
     this.stopping = true;
     this.emitStatus("stopping", "남은 오디오 전사 중");
+
+    if (this.reconnectTimer !== undefined) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
 
     const socket = this.socket;
     if (socket && socket.readyState === WebSocket.OPEN) {
