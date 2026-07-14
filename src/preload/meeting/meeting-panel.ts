@@ -28,7 +28,7 @@ export class MeetingPanel {
   private readonly insertButton: HTMLButtonElement;
   private readonly minimizeButton: HTMLButtonElement;
   private minimized = false;
-  private liveLine?: HTMLDivElement;
+  private liveLines = new Map<string, HTMLDivElement>();
 
   constructor(appInfo: AppInfo, events: MeetingPanelEvents) {
     this.host = document.createElement("div");
@@ -150,7 +150,7 @@ export class MeetingPanel {
 
   clearTranscript(): void {
     this.transcript.replaceChildren();
-    this.liveLine = undefined;
+    this.liveLines.clear();
     const empty = document.createElement("span");
     empty.className = "empty";
     empty.textContent = "전사 대기 중…";
@@ -158,36 +158,39 @@ export class MeetingPanel {
   }
 
   /**
-   * Updates the in-progress (still-speaking) line in place. No hyphen bullet is
-   * committed yet — this is replaced on every partial until the utterance ends.
+   * Updates the in-progress (still-speaking) line for a speaker in place. Each
+   * source (mic/system) keeps its own live line so overlapping speakers don't
+   * clobber each other. No hyphen bullet is committed yet.
    */
-  renderPartialTranscript(text: string): void {
+  renderPartialTranscript(key: string, label: string | undefined, text: string): void {
     this.transcript.querySelector(".empty")?.remove();
 
-    if (!this.liveLine) {
-      this.liveLine = document.createElement("div");
-      this.liveLine.className = "segment live";
-      this.liveLine.style.opacity = "0.6";
-      this.liveLine.style.fontStyle = "italic";
-      this.transcript.append(this.liveLine);
+    let live = this.liveLines.get(key);
+    if (!live) {
+      live = document.createElement("div");
+      live.className = "segment live";
+      live.style.opacity = "0.6";
+      live.style.fontStyle = "italic";
+      this.transcript.append(live);
+      this.liveLines.set(key, live);
     }
-    this.liveLine.textContent = text;
+    live.textContent = label ? `${label}: ${text}` : text;
     this.transcript.scrollTop = this.transcript.scrollHeight;
   }
 
-  /** Commits the utterance as a finalized line once speech pauses. */
-  commitFinalTranscript(text: string): void {
+  /** Commits the utterance as a finalized line once that speaker pauses. */
+  commitFinalTranscript(key: string, label: string | undefined, text: string): void {
     this.transcript.querySelector(".empty")?.remove();
 
-    const line = this.liveLine ?? document.createElement("div");
+    const line = this.liveLines.get(key) ?? document.createElement("div");
     line.className = "segment";
     line.style.opacity = "";
     line.style.fontStyle = "";
-    line.textContent = text;
+    line.textContent = label ? `${label}: ${text}` : text;
     if (!line.isConnected) {
       this.transcript.append(line);
     }
-    this.liveLine = undefined;
+    this.liveLines.delete(key);
     this.transcript.scrollTop = this.transcript.scrollHeight;
   }
 

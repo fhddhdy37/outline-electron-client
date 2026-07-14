@@ -22,6 +22,10 @@ export interface TranscriptSegment {
   endedAt: number;
   confidence?: number;
   provider: string;
+  /** Capture source: "mic" (나) or "system" (상대); absent for legacy mixed audio. */
+  source?: string;
+  /** Speaker label to display, e.g. "나" / "상대" / "화자 2". */
+  speaker?: string;
 }
 
 export interface TranscriptionInput {

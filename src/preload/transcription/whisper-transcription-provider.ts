@@ -25,6 +25,8 @@ interface ServerSegmentMessage {
   startMs: number;
   endMs: number;
   confidence?: number;
+  source?: string;
+  speaker?: string;
 }
 
 interface ServerPartialMessage {
@@ -33,31 +35,45 @@ interface ServerPartialMessage {
   text: string;
   startMs: number;
   endMs: number;
+  source?: string;
+  speaker?: string;
 }
 
+// Captures two channels (ch0 = mic, ch1 = system) and posts them interleaved
+// as one Float32Array [m0, s0, m1, s1, ...]; the system channel is filled with
+// silence when only a mono input is present.
 const PCM_WORKLET_CODE = `
 class PcmCapture extends AudioWorkletProcessor {
   constructor() {
     super();
-    this._chunks = [];
-    this._length = 0;
+    this._mic = [];
+    this._sys = [];
+    this._frames = 0;
   }
 
   process(inputs) {
-    const channel = inputs[0] && inputs[0][0];
-    if (channel && channel.length > 0) {
-      this._chunks.push(channel.slice(0));
-      this._length += channel.length;
-      if (this._length >= 4096) {
-        const merged = new Float32Array(this._length);
+    const input = inputs[0];
+    const mic = input && input[0];
+    if (mic && mic.length > 0) {
+      const sys = input[1];
+      this._mic.push(mic.slice(0));
+      this._sys.push(sys ? sys.slice(0) : new Float32Array(mic.length));
+      this._frames += mic.length;
+      if (this._frames >= 4096) {
+        const interleaved = new Float32Array(this._frames * 2);
         let offset = 0;
-        for (const chunk of this._chunks) {
-          merged.set(chunk, offset);
-          offset += chunk.length;
+        for (let c = 0; c < this._mic.length; c += 1) {
+          const m = this._mic[c];
+          const s = this._sys[c];
+          for (let i = 0; i < m.length; i += 1) {
+            interleaved[offset++] = m[i];
+            interleaved[offset++] = s[i];
+          }
         }
-        this.port.postMessage(merged, [merged.buffer]);
-        this._chunks = [];
-        this._length = 0;
+        this.port.postMessage(interleaved, [interleaved.buffer]);
+        this._mic = [];
+        this._sys = [];
+        this._frames = 0;
       }
     }
     return true;
@@ -122,7 +138,7 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
     this.workletNode = new AudioWorkletNode(audioContext, "pcm-capture", {
       numberOfInputs: 1,
       numberOfOutputs: 1,
-      channelCount: 1,
+      channelCount: 2, // ch0 = mic, ch1 = system
       channelCountMode: "explicit",
       channelInterpretation: "speakers",
     });
@@ -196,6 +212,8 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
         type: "start",
         sampleRate: this.sampleRate,
         language: this.language,
+        channels: 2,
+        layout: ["mic", "system"],
       }),
     );
   }
@@ -322,6 +340,8 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
         startedAt: this.sessionStartedAt + partial.startMs,
         endedAt: this.sessionStartedAt + partial.endMs,
         provider: this.id,
+        source: partial.source,
+        speaker: partial.speaker,
       });
       return;
     }
@@ -339,6 +359,8 @@ export class WhisperTranscriptionProvider implements TranscriptionProvider {
         endedAt: this.sessionStartedAt + segment.endMs,
         confidence: segment.confidence,
         provider: this.id,
+        source: segment.source,
+        speaker: segment.speaker,
       });
       return;
     }

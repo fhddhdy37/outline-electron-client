@@ -17,6 +17,11 @@ const MEETING_MARKER = "🎙 회의 녹음 중…";
 // run in the document, so partials can be rewritten in place before committing.
 const LIVE_SENTINEL = "\u2063";
 
+/** "\ub098: " / "\uc0c1\ub300: " prefix for a segment, or "" when it carries no speaker. */
+function labelPrefix(segment: TranscriptSegment): string {
+  return segment.speaker ? `${segment.speaker}: ` : "";
+}
+
 export class MeetingController {
   private readonly appInfo: AppInfo;
   private readonly editorBridge: EditorBridge;
@@ -111,13 +116,14 @@ export class MeetingController {
 
       this.transcriptionProvider = this.createTranscriptionProvider();
       this.unsubscribeTranscript = this.transcriptionProvider.onTranscript((segment) => {
+        const key = segment.source ?? "default";
         if (segment.isFinal) {
           this.transcriptSegments.push(segment);
-          this.panel?.commitFinalTranscript(segment.text);
+          this.panel?.commitFinalTranscript(key, segment.speaker, segment.text);
           this.commitSegmentIntoDocument(segment);
           this.panel?.setCanInsert(true);
         } else {
-          this.panel?.renderPartialTranscript(segment.text);
+          this.panel?.renderPartialTranscript(key, segment.speaker, segment.text);
           this.renderPartialIntoDocument(segment);
         }
       });
@@ -126,7 +132,9 @@ export class MeetingController {
       });
 
       await this.transcriptionProvider.start({
-        audioStream: this.recordingSession.mixedStream,
+        // Per-speaker channels (ch0 mic / ch1 system) drive transcription; the
+        // mixed stream is only for the downloadable recording.
+        audioStream: this.recordingSession.channeledStream,
         language: "ko",
         subscribeToAudioChunks: (listener) => this.recordingSession?.onAudioChunk(listener) ?? (() => undefined),
       });
@@ -171,7 +179,7 @@ export class MeetingController {
       this.activeEditorTarget,
       MEETING_MARKER,
       LIVE_SENTINEL,
-      `${LIVE_SENTINEL}${segment.text}`,
+      `${LIVE_SENTINEL}${labelPrefix(segment)}${segment.text}`,
       false,
     );
     this.docLiveActive = this.docLiveActive || written;
@@ -188,7 +196,7 @@ export class MeetingController {
       this.activeEditorTarget,
       MEETING_MARKER,
       LIVE_SENTINEL,
-      `- ${segment.text}\n`,
+      `- ${labelPrefix(segment)}${segment.text}\n`,
       true,
     );
     this.docLiveActive = false;
@@ -264,7 +272,9 @@ export class MeetingController {
       timeStyle: "short",
     }).format(new Date());
 
-    const lines = this.transcriptSegments.map((segment) => `- ${segment.text}`);
+    const lines = this.transcriptSegments.map(
+      (segment) => `- ${labelPrefix(segment)}${segment.text}`,
+    );
 
     return `\n\n회의 전사 (${recordedAt})\n${lines.join("\n")}\n`;
   }

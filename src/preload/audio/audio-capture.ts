@@ -18,6 +18,9 @@ export interface RecordingResult {
 
 export interface RecordingSession {
   mixedStream: MediaStream;
+  /** 2-channel stream: ch0 = microphone (나), ch1 = system audio (상대). */
+  channeledStream: MediaStream;
+  channelLayout: string[];
   startedAt: number;
   hasMicrophoneAudio: boolean;
   hasSystemAudio: boolean;
@@ -50,7 +53,12 @@ export class AudioCaptureService {
   async start(options: AudioCaptureStartOptions): Promise<RecordingSession> {
     const warnings: string[] = [];
     const audioContext = new AudioContext();
-    const destination = audioContext.createMediaStreamDestination();
+    // Mixed output feeds the downloadable recording; the channeled output keeps
+    // mic and system on separate channels (ch0/ch1) for per-speaker transcription.
+    const mixDestination = audioContext.createMediaStreamDestination();
+    const merger = audioContext.createChannelMerger(2);
+    const channeledDestination = audioContext.createMediaStreamDestination();
+    merger.connect(channeledDestination);
     const connections: ConnectedAudioNode[] = [];
     const chunks: Blob[] = [];
     const listeners = new Set<(chunk: AudioChunk) => void>();
@@ -67,7 +75,9 @@ export class AudioCaptureService {
 
     const hasMicrophoneAudio = this.connectAudioStream(
       audioContext,
-      destination,
+      mixDestination,
+      merger,
+      0,
       microphoneStream,
       connections,
     );
@@ -84,7 +94,9 @@ export class AudioCaptureService {
 
         hasSystemAudio = this.connectAudioStream(
           audioContext,
-          destination,
+          mixDestination,
+          merger,
+          1,
           systemStream,
           connections,
         );
@@ -107,7 +119,7 @@ export class AudioCaptureService {
 
     const mimeType = preferredMimeType();
     const recorder = new MediaRecorder(
-      destination.stream,
+      mixDestination.stream,
       mimeType ? { mimeType } : undefined,
     );
 
@@ -132,7 +144,9 @@ export class AudioCaptureService {
     recorder.start(options.timesliceMs);
 
     return {
-      mixedStream: destination.stream,
+      mixedStream: mixDestination.stream,
+      channeledStream: channeledDestination.stream,
+      channelLayout: ["mic", "system"],
       startedAt,
       hasMicrophoneAudio,
       hasSystemAudio,
@@ -151,7 +165,8 @@ export class AudioCaptureService {
 
             stopStream(microphoneStream);
             stopStream(systemStream);
-            stopStream(destination.stream);
+            stopStream(mixDestination.stream);
+            stopStream(channeledDestination.stream);
             await audioContext.close();
 
             const endedAt = Date.now();
@@ -180,7 +195,9 @@ export class AudioCaptureService {
 
   private connectAudioStream(
     audioContext: AudioContext,
-    destination: MediaStreamAudioDestinationNode,
+    mixDestination: MediaStreamAudioDestinationNode,
+    merger: ChannelMergerNode,
+    channelIndex: number,
     stream: MediaStream,
     connections: ConnectedAudioNode[],
   ): boolean {
@@ -193,7 +210,13 @@ export class AudioCaptureService {
     const source = audioContext.createMediaStreamSource(sourceStream);
     const gain = audioContext.createGain();
     gain.gain.value = 1;
-    source.connect(gain).connect(destination);
+    // Force mono so this source fills exactly one merger output channel.
+    gain.channelCount = 1;
+    gain.channelCountMode = "explicit";
+    gain.channelInterpretation = "speakers";
+    source.connect(gain);
+    gain.connect(mixDestination); // mixed stream → downloadable recording
+    gain.connect(merger, 0, channelIndex); // channeled stream → per-speaker transcription
     connections.push({ source, gain });
 
     return true;
