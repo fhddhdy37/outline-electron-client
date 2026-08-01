@@ -36,14 +36,14 @@ outline-electron-client/
 
 ## 설계 요약
 
-- Electron `BrowserWindow`가 기본 Outline URL인 `https://tukadlab.ignorelist.com`을 로드합니다.
+- Electron `BrowserWindow`가 기본 Outline URL인 `https://wiki.tukadlab.cloud`을 로드합니다.
 - `nodeIntegration`은 끄고 `contextIsolation`과 renderer `sandbox`는 켠 상태로 동작합니다.
 - Outline 서버 코드는 수정하지 않고 preload script가 DOM 이벤트를 관찰합니다.
 - `/회의` 감지는 `src/preload/meeting/command-detector.ts`에 격리했습니다.
 - 회의 UI는 Shadow DOM 기반 작은 패널로 주입되어 Outline 스타일과 충돌을 줄입니다.
 - 녹음은 `getUserMedia` 마이크와 `getDisplayMedia` 시스템 오디오를 Web Audio API로 믹싱합니다.
 - 전사는 `TranscriptionProvider` 인터페이스 뒤에 숨겼습니다. 기본 구현은 `WhisperTranscriptionProvider`로, 믹싱된 오디오를 AudioWorklet에서 16kHz Int16 PCM으로 뽑아 WebSocket으로 자체 호스팅 Whisper 서버에 스트리밍하고, 무음 구간 기준으로 확정된 세그먼트를 받아 표시합니다.
-- 전사 서버 주소는 기본적으로 Outline origin에서 유도됩니다 (`https://tukadlab.ignorelist.com` → `wss://tukadlab.ignorelist.com/stt`). `STT_URL` 환경변수나 `--stt-url=` 인자로 변경할 수 있고, `STT_URL=mock`이면 기존 mock provider를 사용합니다.
+- 전사 서버 주소는 기본적으로 Outline origin에서 유도됩니다 (`https://wiki.tukadlab.cloud` → `wss://wiki.tukadlab.cloud/stt`). `STT_URL` 환경변수나 `--stt-url=` 인자로 변경할 수 있고, `STT_URL=mock`이면 기존 mock provider를 사용합니다.
 - 전사 삽입은 `EditorBridge`를 통해 현재 Outline 편집 영역에 plain text로 넣는 구조입니다.
 
 ## 전사 서버 (outline-selfhost/stt-server/)
@@ -84,7 +84,7 @@ Linux 컨테이너나 일부 제한된 개발 환경에서 Electron이 `chrome-s
 
 ## 이메일 로그인 링크 처리
 
-Outline의 이메일 로그인 링크는 기본적으로 `https://tukadlab.ignorelist.com/...` 형태입니다. Windows에서 이 링크를 메일 앱에서 그냥 클릭하면 OS 기본 브라우저가 열리고, Electron 앱의 별도 세션에는 로그인 쿠키가 저장되지 않습니다.
+Outline의 이메일 로그인 링크는 기본적으로 `https://wiki.tukadlab.cloud/...` 형태입니다. Windows에서 이 링크를 메일 앱에서 그냥 클릭하면 OS 기본 브라우저가 열리고, Electron 앱의 별도 세션에는 로그인 쿠키가 저장되지 않습니다.
 
 현재 앱은 두 가지 보완 흐름을 지원합니다.
 
@@ -93,14 +93,14 @@ Outline의 이메일 로그인 링크는 기본적으로 `https://tukadlab.ignor
 1. Electron 앱에서 이메일 로그인을 요청합니다.
 2. 메일에서 Outline 로그인 링크를 우클릭해 링크 주소를 복사합니다.
 3. Electron 앱으로 돌아와 `Ctrl+Shift+L`을 누르거나 `Authentication` → `Open login link from clipboard` 메뉴를 선택합니다.
-4. 앱이 클립보드의 `https://tukadlab.ignorelist.com/...` 로그인 링크를 Electron 내부 세션으로 로드합니다.
+4. 앱이 클립보드의 `https://wiki.tukadlab.cloud/...` 로그인 링크를 Electron 내부 세션으로 로드합니다.
 
 ### 2. 딥링크 기반 원클릭 흐름
 
 앱은 `outline-electron://` 커스텀 프로토콜을 등록하고 다음 형태의 링크를 처리합니다.
 
 ```text
-outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com%2Fauth%2Femail.callback%3F...
+outline-electron://open?url=https%3A%2F%2Fwiki.tukadlab.cloud%2Fauth%2Femail.callback%3F...
 ```
 
 이 링크가 열리면 앱은 `url` 파라미터 안의 Outline URL이 현재 서버 origin과 같은지 검증한 뒤 Electron 창에서 로드합니다.
@@ -114,7 +114,7 @@ outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com%2Fauth%2Femail
 개발 중 딥링크 등록 여부는 앱을 한 번 실행한 뒤 PowerShell에서 아래처럼 확인할 수 있습니다.
 
 ```powershell
-Start-Process "outline-electron://open?url=https%3A%2F%2Ftukadlab.ignorelist.com%2F"
+Start-Process "outline-electron://open?url=https%3A%2F%2Fwiki.tukadlab.cloud%2F"
 ```
 
 ## 사용 흐름
