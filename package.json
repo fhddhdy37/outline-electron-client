@@ -6,9 +6,10 @@
   "author": "tukadlab",
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && npm run bundle:preload && npm run bundle:chrome",
+    "build": "tsc -p tsconfig.json && npm run bundle:preload && npm run bundle:chrome && npm run bundle:shortcuts",
     "bundle:preload": "esbuild src/preload/index.ts --bundle --platform=browser --format=cjs --external:electron --outfile=dist/preload/index.js",
     "bundle:chrome": "esbuild src/preload/chrome.ts --bundle --platform=browser --format=cjs --external:electron --outfile=dist/preload/chrome.js",
+    "bundle:shortcuts": "esbuild src/preload/shortcuts.ts --bundle --platform=browser --format=cjs --external:electron --outfile=dist/preload/shortcuts.js",
     "dev": "npm run build && electron .",
     "start": "electron .",
     "typecheck": "tsc -p tsconfig.json --noEmit",

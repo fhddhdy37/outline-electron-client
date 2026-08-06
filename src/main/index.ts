@@ -8,8 +8,10 @@ import {
   type SystemAudioStrategy,
 } from "../shared/ipc";
 import { deriveServiceUrl } from "../shared/endpoints";
+import { ShortcutRegistry } from "./shortcuts";
 import { WindowManager } from "./window-manager";
 import { CHROME_HTML } from "./chrome-html";
+import { SHORTCUTS_HTML } from "./shortcuts-html";
 
 const OUTLINE_PARTITION = "persist:outline-client";
 const OUTLINE_URL_ARG = "--outline-url=";
@@ -202,10 +204,9 @@ function openLoginLinkFromClipboard(): void {
 }
 
 function configureAppMenu(): void {
-  // No application menu bar — the app uses its own tab-bar chrome. Keyboard
-  // shortcuts that lived in the menu are handled directly by TabManager:
-  // Ctrl/Cmd+T (new tab), Ctrl/Cmd+W (close tab), and Ctrl/Cmd+Shift+L
-  // (load login link from clipboard, via onLoginLinkShortcut).
+  // No application menu bar — the app uses its own tab-bar chrome. Every
+  // keyboard shortcut goes through ShortcutRegistry instead, so the user can
+  // rebind them from the shortcut window (Ctrl/Cmd+,).
   Menu.setApplicationMenu(null);
 }
 
@@ -286,8 +287,11 @@ function createWindowManager(outlineSession: Electron.Session): WindowManager {
     session: outlineSession,
     preloadPath: path.join(__dirname, "../preload/index.js"),
     chromePreloadPath: path.join(__dirname, "../preload/chrome.js"),
+    overlayPreloadPath: path.join(__dirname, "../preload/shortcuts.js"),
     chromeHtml: CHROME_HTML,
+    overlayHtml: SHORTCUTS_HTML,
     homeUrl: outlineUrl.toString(),
+    shortcuts: new ShortcutRegistry(),
     isAllowedOrigin: isAllowedOutlineOrigin,
     onLoginLinkShortcut: openLoginLinkFromClipboard,
   });

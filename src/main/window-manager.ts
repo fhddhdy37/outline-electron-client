@@ -1,14 +1,23 @@
 import { ipcMain, screen } from "electron";
 import {
+  SHORTCUTS_CHANGED_CHANNEL,
+  SHORTCUTS_CLOSE_CHANNEL,
+  SHORTCUTS_GET_CHANNEL,
+  SHORTCUTS_OPEN_CHANNEL,
+  SHORTCUTS_RESET_CHANNEL,
+  SHORTCUTS_SET_CHANNEL,
   TAB_ACTIVATE_CHANNEL,
   TAB_CLOSE_CHANNEL,
   TAB_CREATE_CHANNEL,
   TAB_DRAG_BEGIN_CHANNEL,
   TAB_DRAG_CANCEL_CHANNEL,
   TAB_DROP_CHANNEL,
+  type ShortcutSetRequest,
+  type ShortcutsSnapshot,
   type TabDropRequest,
 } from "../shared/ipc";
 import { DragGhost, type GhostMode } from "./drag-ghost";
+import type { ShortcutActionId, ShortcutRegistry } from "./shortcuts";
 import { TabManager } from "./tab-manager";
 
 /** How far a detached window is offset so the grabbed tab lands under the cursor. */
@@ -30,10 +39,13 @@ export interface WindowManagerOptions {
   session: Electron.Session;
   preloadPath: string;
   chromePreloadPath: string;
+  overlayPreloadPath: string;
   chromeHtml: string;
+  overlayHtml: string;
   homeUrl: string;
+  shortcuts: ShortcutRegistry;
   isAllowedOrigin(url: string): boolean;
-  /** Invoked on Ctrl/Cmd+Shift+L (load login link from clipboard). */
+  /** Invoked by the `login.link` action. */
   onLoginLinkShortcut(): void;
 }
 
@@ -47,10 +59,9 @@ function containsPoint(rect: Electron.Rectangle, point: Electron.Point, margin =
 }
 
 /**
- * Owns every tabbed window and is the single place IPC from the tab bars is
- * handled — each message is routed back to the window whose tab-bar view sent
- * it. It also arbitrates tab drags, which can end in a different window than
- * they started in.
+ * Owns every tabbed window plus the shortcut-settings window, and is the single
+ * place IPC from the tab bars is handled — each message is routed back to the
+ * window whose tab-bar view sent it.
  */
 export class WindowManager {
   private readonly managers: TabManager[] = [];
@@ -60,6 +71,7 @@ export class WindowManager {
   constructor(options: WindowManagerOptions) {
     this.options = options;
     this.registerIpc();
+    this.options.shortcuts.onChange(() => this.broadcastShortcuts());
   }
 
   get hasWindows(): boolean {
@@ -75,12 +87,15 @@ export class WindowManager {
       session: this.options.session,
       preloadPath: this.options.preloadPath,
       chromePreloadPath: this.options.chromePreloadPath,
+      overlayPreloadPath: this.options.overlayPreloadPath,
       chromeHtml: this.options.chromeHtml,
+      overlayHtml: this.options.overlayHtml,
       homeUrl: this.options.homeUrl,
       bounds,
       show,
       isAllowedOrigin: this.options.isAllowedOrigin,
-      onLoginLinkShortcut: this.options.onLoginLinkShortcut,
+      resolveShortcut: (input) => this.options.shortcuts.resolve(input),
+      onShortcut: (action, source) => this.runAction(action, source),
       onTabDrop: (request, source) => this.handleTabDrop(request, source),
       onClosed: (source) => this.forget(source),
     });
@@ -113,6 +128,11 @@ export class WindowManager {
     this.createWindow(url).focus();
   }
 
+  /** Opens the shortcut panel as a modal sheet inside the given window. */
+  openShortcuts(manager?: TabManager): void {
+    (manager ?? this.activeManager())?.openOverlay();
+  }
+
   private forget(manager: TabManager): void {
     const index = this.managers.indexOf(manager);
     if (index !== -1) {
@@ -121,6 +141,58 @@ export class WindowManager {
 
     if (this.drag?.source === manager) {
       this.endDrag();
+    }
+  }
+
+  private runAction(action: ShortcutActionId, source: TabManager): void {
+    switch (action) {
+      case "tab.new":
+        source.createTab();
+        return;
+      case "tab.close":
+        source.closeActiveTab();
+        return;
+      case "tab.next":
+        source.cycleTab(1);
+        return;
+      case "tab.prev":
+        source.cycleTab(-1);
+        return;
+      case "window.new": {
+        const bounds = source.baseWindow.getBounds();
+        this.createWindow(this.options.homeUrl, {
+          width: bounds.width,
+          height: bounds.height,
+          x: bounds.x + 32,
+          y: bounds.y + 32,
+        }).focus();
+        return;
+      }
+      case "page.reload":
+        source.activeWebContents()?.reload();
+        return;
+      case "page.back": {
+        const wc = source.activeWebContents();
+        if (wc?.navigationHistory.canGoBack()) {
+          wc.navigationHistory.goBack();
+        }
+        return;
+      }
+      case "page.forward": {
+        const wc = source.activeWebContents();
+        if (wc?.navigationHistory.canGoForward()) {
+          wc.navigationHistory.goForward();
+        }
+        return;
+      }
+      case "login.link":
+        this.options.onLoginLinkShortcut();
+        return;
+      case "shortcuts.open":
+        this.openShortcuts(source);
+        return;
+      default:
+        return;
     }
   }
 
@@ -317,6 +389,21 @@ export class WindowManager {
     );
   }
 
+  private managerForOverlay(event: Electron.IpcMainEvent): TabManager | undefined {
+    return this.managers.find(
+      (manager) => !manager.isDestroyed && manager.overlayWebContentsId === event.sender.id,
+    );
+  }
+
+  private broadcastShortcuts(): void {
+    const snapshot = this.options.shortcuts.snapshot();
+    for (const manager of this.managers) {
+      if (!manager.isDestroyed) {
+        manager.sendToOverlay(SHORTCUTS_CHANGED_CHANNEL, snapshot);
+      }
+    }
+  }
+
   private registerIpc(): void {
     ipcMain.on(TAB_CREATE_CHANNEL, (event) => this.managerForSender(event)?.createTab());
     ipcMain.on(TAB_CLOSE_CHANNEL, (event, id: number) => this.managerForSender(event)?.closeTab(id));
@@ -343,6 +430,28 @@ export class WindowManager {
         });
       }
     });
+    ipcMain.on(SHORTCUTS_OPEN_CHANNEL, (event) => this.openShortcuts(this.managerForSender(event)));
+    ipcMain.on(SHORTCUTS_CLOSE_CHANNEL, (event) => this.managerForOverlay(event)?.closeOverlay());
 
+    ipcMain.handle(SHORTCUTS_GET_CHANNEL, (): ShortcutsSnapshot =>
+      this.options.shortcuts.snapshot(),
+    );
+    ipcMain.handle(SHORTCUTS_SET_CHANNEL, (_event, request: ShortcutSetRequest) => {
+      if (request && typeof request.id === "string") {
+        this.options.shortcuts.set(
+          request.id,
+          typeof request.accelerator === "string" ? request.accelerator : null,
+        );
+      }
+      return this.options.shortcuts.snapshot();
+    });
+    ipcMain.handle(SHORTCUTS_RESET_CHANNEL, (_event, id?: string) => {
+      if (typeof id === "string") {
+        this.options.shortcuts.reset(id);
+      } else {
+        this.options.shortcuts.resetAll();
+      }
+      return this.options.shortcuts.snapshot();
+    });
   }
 }

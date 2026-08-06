@@ -1,11 +1,13 @@
 import { BaseWindow, WebContentsView, shell } from "electron";
 import {
+  SHORTCUTS_VISIBILITY_CHANNEL,
   TAB_DRAG_ZONE_CHANNEL,
   TAB_STATE_CHANNEL,
   type TabDragZone,
   type TabDropRequest,
   type TabState,
 } from "../shared/ipc";
+import type { ShortcutActionId } from "./shortcuts";
 
 const TAB_BAR_HEIGHT = 40;
 
@@ -31,8 +33,12 @@ export interface TabManagerOptions {
   preloadPath: string;
   /** Preload for the tab-bar chrome view. */
   chromePreloadPath: string;
+  /** Preload for the shortcut overlay. */
+  overlayPreloadPath: string;
   /** Self-contained HTML for the tab bar. */
   chromeHtml: string;
+  /** Self-contained HTML for the shortcut overlay. */
+  overlayHtml: string;
   /** URL a fresh tab opens. */
   homeUrl: string;
   /** Window bounds; defaults to a centred window when omitted. */
@@ -40,8 +46,9 @@ export interface TabManagerOptions {
   /** Keeps the window hidden until the caller shows it. */
   show?: boolean;
   isAllowedOrigin(url: string): boolean;
-  /** Invoked on Ctrl/Cmd+Shift+L (load login link from clipboard). */
-  onLoginLinkShortcut?: () => void;
+  /** Maps a key press to an action, or undefined when nothing is bound. */
+  resolveShortcut(input: Electron.Input): ShortcutActionId | undefined;
+  onShortcut(action: ShortcutActionId, manager: TabManager): void;
   /** A tab drag finished in this window's tab bar. */
   onTabDrop(request: TabDropRequest, manager: TabManager): void;
   onClosed(manager: TabManager): void;
@@ -62,6 +69,9 @@ export class TabManager {
   private readonly tabs: Tab[] = [];
   private readonly options: TabManagerOptions;
   private activeId: number | undefined;
+  /** Built on first use; the shortcut panel is a rarely-opened overlay. */
+  private overlayView: WebContentsView | undefined;
+  private overlayOpen = false;
 
   constructor(options: TabManagerOptions) {
     this.options = options;
@@ -135,6 +145,77 @@ export class TabManager {
     return tab.view.webContents.getTitle() || "새 탭";
   }
 
+  /**
+   * Shows the shortcut panel as a modal sheet inside this window: a transparent
+   * view stacked over everything, dimming the page behind it.
+   */
+  openOverlay(): void {
+    const view = this.ensureOverlay();
+    if (!this.overlayOpen) {
+      this.overlayOpen = true;
+      this.window.contentView.addChildView(view);
+      view.setVisible(true);
+      this.layout();
+    }
+
+    this.focus();
+    view.webContents.focus();
+    view.webContents.send(SHORTCUTS_VISIBILITY_CHANNEL, true);
+  }
+
+  closeOverlay(): void {
+    if (!this.overlayOpen || !this.overlayView) {
+      return;
+    }
+
+    this.overlayOpen = false;
+    this.overlayView.setVisible(false);
+    this.window.contentView.removeChildView(this.overlayView);
+    this.focusActive();
+  }
+
+  get isOverlayOpen(): boolean {
+    return this.overlayOpen;
+  }
+
+  /** The overlay's webContents id, so IPC from it can be routed back here. */
+  get overlayWebContentsId(): number | undefined {
+    return this.overlayView && !this.overlayView.webContents.isDestroyed()
+      ? this.overlayView.webContents.id
+      : undefined;
+  }
+
+  sendToOverlay(channel: string, payload: unknown): void {
+    if (this.overlayView && !this.overlayView.webContents.isDestroyed()) {
+      this.overlayView.webContents.send(channel, payload);
+    }
+  }
+
+  private ensureOverlay(): WebContentsView {
+    if (this.overlayView && !this.overlayView.webContents.isDestroyed()) {
+      return this.overlayView;
+    }
+
+    const view = new WebContentsView({
+      webPreferences: {
+        preload: this.options.overlayPreloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        transparent: true,
+      },
+    });
+
+    // Transparent so the dimmed backdrop shows the page underneath.
+    view.setBackgroundColor("#00000000");
+    void view.webContents.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(this.options.overlayHtml)}`,
+    );
+
+    this.overlayView = view;
+    return view;
+  }
+
   /** Screen-space rectangle of the tab strip, used to resolve drag drops. */
   tabBarScreenBounds(): Electron.Rectangle {
     const bounds = this.window.getContentBounds();
@@ -199,6 +280,7 @@ export class TabManager {
       tab.view.setVisible(tab.id === id);
     }
     this.layout();
+    this.raiseOverlay();
     this.focusActive();
     this.broadcast();
   }
@@ -362,39 +444,33 @@ export class TabManager {
   }
 
   private handleShortcut(event: Electron.Event, input: Electron.Input): void {
-    if (input.type !== "keyDown") {
+    const action = this.options.resolveShortcut(input);
+    if (!action) {
       return;
     }
 
-    // Ctrl+Tab / Ctrl+Shift+Tab cycles tabs. Uses Ctrl on every platform since
-    // Cmd+Tab is the macOS application switcher.
-    if (input.control && input.key === "Tab") {
-      event.preventDefault();
-      this.cycleTab(input.shift ? -1 : 1);
-      return;
-    }
-
-    const modifier = process.platform === "darwin" ? input.meta : input.control;
-    if (!modifier) {
-      return;
-    }
-
-    const key = input.key.toLowerCase();
-    if (key === "l" && input.shift) {
-      event.preventDefault();
-      this.options.onLoginLinkShortcut?.();
-    } else if (key === "t") {
-      event.preventDefault();
-      this.createTab();
-    } else if (key === "w") {
-      event.preventDefault();
-      this.closeActiveTab();
-    }
+    event.preventDefault();
+    this.options.onShortcut(action, this);
   }
 
   private focusActive(): void {
+    // The overlay is modal; it keeps focus while it is up.
+    if (this.overlayOpen) {
+      return;
+    }
+
     const active = this.tabs.find((tab) => tab.id === this.activeId);
     active?.view.webContents.focus();
+  }
+
+  /** Keeps the overlay above views added after it was opened. */
+  private raiseOverlay(): void {
+    if (!this.overlayOpen || !this.overlayView) {
+      return;
+    }
+
+    this.window.contentView.removeChildView(this.overlayView);
+    this.window.contentView.addChildView(this.overlayView);
   }
 
   private layout(): void {
@@ -409,6 +485,10 @@ export class TabManager {
     };
     const active = this.tabs.find((tab) => tab.id === this.activeId);
     active?.view.setBounds(body);
+
+    if (this.overlayOpen) {
+      this.overlayView?.setBounds({ x: 0, y: 0, width, height });
+    }
   }
 
   private broadcast(): void {

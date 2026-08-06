@@ -14,10 +14,13 @@ outline-electron-client/
 │   │   ├── window-manager.ts    # 창 목록, 탭 드롭 라우팅, IPC 단일 등록
 │   │   ├── tab-manager.ts       # 창 하나의 탭 바 + 탭 뷰
 │   │   ├── chrome-html.ts       # 탭 바 페이지 (드래그 포함)
-│   │   └── drag-ghost.ts        # 탭 분리 시 커서를 따라가는 미리보기 창
+│   │   ├── drag-ghost.ts        # 탭 분리 시 커서를 따라가는 미리보기 창
+│   │   ├── shortcuts.ts         # 단축키 레지스트리 + 사용자 설정 저장
+│   │   └── shortcuts-html.ts    # 단축키 설정 모달 페이지
 │   ├── preload/
 │   │   ├── index.ts
 │   │   ├── chrome.ts            # 탭 바 브릿지
+│   │   ├── shortcuts.ts         # 단축키 설정 모달 브릿지
 │   │   ├── audio/
 │   │   │   └── audio-capture.ts
 │   │   ├── meeting/
@@ -33,6 +36,7 @@ outline-electron-client/
 │   │       └── types.ts
 │   └── shared/
 │       ├── endpoints.ts   # 커스텀 API 엔드포인트 단일 정의
+│       ├── shortcuts.ts   # 키 바인딩 문자열 파싱/표시 공통 로직
 │       └── ipc.ts
 └── README.md
 ```
@@ -135,6 +139,26 @@ Start-Process "outline-electron://open?url=https%3A%2F%2Fwiki.tukadlab.cloud%2F"
 드래그 중 "지금 탭이 어디 있는가"는 main process가 `screen.getCursorScreenPoint()`를 16ms마다 읽어서 판정하고, 그 결과를 탭 바에 알려줍니다. 탭 바 뷰는 높이 40px짜리 별도 `WebContentsView`라 렌더러 좌표만으로는 "창 밖"을 신뢰할 수 없기 때문입니다.
 
 미리보기(`src/main/drag-ghost.ts`)는 투명·클릭 통과·비활성 표시(`showInactive`) 창입니다. 드래그를 시작한 탭 바가 마우스를 캡처한 상태이므로, 이 창이 절대 포커스를 가져가면 안 됩니다.
+
+## 키보드 단축키
+
+`Ctrl/Cmd+,`로 단축키 설정을 엽니다 (탭 바 오른쪽 `⌨` 버튼도 같습니다). 별도 창이 아니라 현재 창 위에 뜨는 모달 시트입니다 — 창 전체를 덮는 투명 `WebContentsView`(`overlayView`)를 쌓아서, 뒤쪽 페이지가 어두워진 채로 비쳐 보입니다. 배경 클릭이나 Esc로 닫습니다.
+
+항목을 클릭하고 원하는 조합을 누르면 즉시 반영되고, Backspace로 해제, Esc로 취소합니다. 같은 키에 두 동작이 걸리면 양쪽에 충돌로 표시됩니다. 모달이 떠 있는 동안에는 입력이 오버레이로 가므로 앱 단축키가 발동하지 않아 키 조합을 그대로 캡처할 수 있습니다.
+
+| 동작 | 기본값 |
+| --- | --- |
+| 새 탭 / 탭 닫기 | `Ctrl+T` / `Ctrl+W` |
+| 다음 탭 / 이전 탭 | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
+| 새 창 | `Ctrl+N` |
+| 새로 고침 | `Ctrl+R` |
+| 뒤로 / 앞으로 | `Alt+←` / `Alt+→` (macOS는 `⌘[` / `⌘]`) |
+| 클립보드의 로그인 링크 열기 | `Ctrl+Shift+L` |
+| 단축키 설정 열기 | `Ctrl+,` |
+
+macOS에서는 `Ctrl` 대신 `⌘`를 씁니다. 단, 탭 순환은 `⌘Tab`이 OS 앱 전환이라 모든 플랫폼에서 `Ctrl+Tab`입니다.
+
+사용자가 바꾼 값만 `userData/keybindings.json`에 저장됩니다. 기본값과 같아지면 항목이 지워지므로, 기본값이 바뀌면 그대로 따라갑니다. 애플리케이션 메뉴 바는 없고 모든 단축키는 `before-input-event`에서 `ShortcutRegistry`를 거칩니다.
 
 ## 사용 흐름
 

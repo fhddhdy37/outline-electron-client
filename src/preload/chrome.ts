@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import {
+  SHORTCUTS_OPEN_CHANNEL,
   TAB_ACTIVATE_CHANNEL,
   TAB_CLOSE_CHANNEL,
   TAB_CREATE_CHANNEL,
@@ -30,6 +31,7 @@ contextBridge.exposeInMainWorld("tabsApi", {
     ipcRenderer.on(TAB_DRAG_ZONE_CHANNEL, listener);
     return () => ipcRenderer.removeListener(TAB_DRAG_ZONE_CHANNEL, listener);
   },
+  openShortcuts: () => ipcRenderer.send(SHORTCUTS_OPEN_CHANNEL),
   onState: (callback: (state: TabState) => void): (() => void) => {
     const listener = (_event: unknown, state: TabState): void => callback(state);
     ipcRenderer.on(TAB_STATE_CHANNEL, listener);

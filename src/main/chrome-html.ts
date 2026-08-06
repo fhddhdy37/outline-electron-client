@@ -167,6 +167,7 @@ export const CHROME_HTML = `<!doctype html>
   <div id="bar">
     <div id="tabs"></div>
     <button id="new-tab" class="bar-button" type="button" title="새 탭" aria-label="새 탭">+</button>
+    <button id="shortcuts" class="bar-button" type="button" title="키보드 단축키" aria-label="키보드 단축키">⌨</button>
   </div>
   <script>
     (function () {
@@ -427,6 +428,10 @@ export const CHROME_HTML = `<!doctype html>
 
       document.getElementById("new-tab").addEventListener("click", function () {
         window.tabsApi.create();
+      });
+
+      document.getElementById("shortcuts").addEventListener("click", function () {
+        window.tabsApi.openShortcuts();
       });
 
       window.tabsApi.onState(onState);
