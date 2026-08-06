@@ -10,9 +10,14 @@ outline-electron-client/
 ├── tsconfig.json
 ├── src/
 │   ├── main/
-│   │   └── index.ts
+│   │   ├── index.ts
+│   │   ├── window-manager.ts    # 창 목록, 탭 드롭 라우팅, IPC 단일 등록
+│   │   ├── tab-manager.ts       # 창 하나의 탭 바 + 탭 뷰
+│   │   ├── chrome-html.ts       # 탭 바 페이지 (드래그 포함)
+│   │   └── drag-ghost.ts        # 탭 분리 시 커서를 따라가는 미리보기 창
 │   ├── preload/
 │   │   ├── index.ts
+│   │   ├── chrome.ts            # 탭 바 브릿지
 │   │   ├── audio/
 │   │   │   └── audio-capture.ts
 │   │   ├── meeting/
@@ -116,6 +121,20 @@ outline-electron://open?url=https%3A%2F%2Fwiki.tukadlab.cloud%2Fauth%2Femail.cal
 ```powershell
 Start-Process "outline-electron://open?url=https%3A%2F%2Fwiki.tukadlab.cloud%2F"
 ```
+
+## 탭과 창
+
+앱은 자체 탭 바를 그리고, 창 하나가 `TabManager` 하나에 대응합니다. 탭은 `WebContentsView`라서 창 사이를 옮겨도 다시 로드되지 않고 스크롤 위치나 진행 중인 회의 녹음 상태가 그대로 유지됩니다.
+
+- 탭을 좌우로 끌면 순서가 바뀝니다.
+- 탭을 탭 바 밖으로 끌면 탭이 탭 바에서 접히면서 빠지고, 커서에 미니 창 모양 미리보기가 따라붙습니다. 놓으면 그 미리보기가 실제 창 크기로 커진 뒤 새 창으로 바뀝니다.
+- 다른 창의 탭 바 위로 가져가면 미리보기가 탭 모양으로 줄어들고, 놓으면 그 창의 마지막 탭으로 들어갑니다.
+- 밖으로 뺐다가 다시 탭 바로 돌아오면 미리보기가 사라지고 탭이 제자리에 복귀합니다.
+- 창의 마지막 탭을 닫으면 그 창이 닫히고, 남은 탭이 하나뿐인 창에서는 분리가 일어나지 않습니다.
+
+드래그 중 "지금 탭이 어디 있는가"는 main process가 `screen.getCursorScreenPoint()`를 16ms마다 읽어서 판정하고, 그 결과를 탭 바에 알려줍니다. 탭 바 뷰는 높이 40px짜리 별도 `WebContentsView`라 렌더러 좌표만으로는 "창 밖"을 신뢰할 수 없기 때문입니다.
+
+미리보기(`src/main/drag-ghost.ts`)는 투명·클릭 통과·비활성 표시(`showInactive`) 창입니다. 드래그를 시작한 탭 바가 마우스를 캡처한 상태이므로, 이 창이 절대 포커스를 가져가면 안 됩니다.
 
 ## 사용 흐름
 

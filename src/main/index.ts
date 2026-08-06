@@ -1,13 +1,4 @@
-import {
-  app,
-  BaseWindow,
-  clipboard,
-  desktopCapturer,
-  dialog,
-  ipcMain,
-  Menu,
-  session,
-} from "electron";
+import { app, clipboard, desktopCapturer, dialog, ipcMain, Menu, session } from "electron";
 import path from "node:path";
 import {
   APP_INFO_CHANNEL,
@@ -17,7 +8,7 @@ import {
   type SystemAudioStrategy,
 } from "../shared/ipc";
 import { deriveServiceUrl } from "../shared/endpoints";
-import { TabManager } from "./tab-manager";
+import { WindowManager } from "./window-manager";
 import { CHROME_HTML } from "./chrome-html";
 
 const OUTLINE_PARTITION = "persist:outline-client";
@@ -25,7 +16,7 @@ const OUTLINE_URL_ARG = "--outline-url=";
 const OPEN_URL_ARG = "--open-url=";
 const STT_URL_ARG = "--stt-url=";
 
-let tabManager: TabManager | undefined;
+let windowManager: WindowManager | undefined;
 let pendingLaunchUrl: string | undefined;
 
 function resolveOutlineUrl(): URL {
@@ -161,7 +152,7 @@ function registerAuthLinkProtocol(): void {
 }
 
 function focusMainWindow(): void {
-  tabManager?.focus();
+  windowManager?.focus();
 }
 
 function openOutlineUrlInApp(targetUrl: string): void {
@@ -170,12 +161,12 @@ function openOutlineUrlInApp(targetUrl: string): void {
     return;
   }
 
-  if (!tabManager || tabManager.isDestroyed) {
+  if (!windowManager || !windowManager.hasWindows) {
     pendingLaunchUrl = allowedTarget;
     return;
   }
 
-  tabManager.openUrl(allowedTarget);
+  windowManager.openUrl(allowedTarget);
 }
 
 function handlePotentialLaunchUrl(value?: string | null): boolean {
@@ -198,7 +189,7 @@ function openLoginLinkFromClipboard(): void {
     `Clipboard does not contain an allowed ${outlineUrl.origin} login URL. ` +
     `Copy the Outline email login link, then run this action again.`;
 
-  if (tabManager && !tabManager.isDestroyed) {
+  if (windowManager?.hasWindows) {
     void dialog.showMessageBox({
       type: "warning",
       title: "Cannot open login link",
@@ -290,8 +281,8 @@ function configureIpc(): void {
   });
 }
 
-function createTabbedWindow(outlineSession: Electron.Session): void {
-  tabManager = new TabManager({
+function createWindowManager(outlineSession: Electron.Session): WindowManager {
+  return new WindowManager({
     session: outlineSession,
     preloadPath: path.join(__dirname, "../preload/index.js"),
     chromePreloadPath: path.join(__dirname, "../preload/chrome.js"),
@@ -300,14 +291,12 @@ function createTabbedWindow(outlineSession: Electron.Session): void {
     isAllowedOrigin: isAllowedOutlineOrigin,
     onLoginLinkShortcut: openLoginLinkFromClipboard,
   });
+}
 
-  tabManager.baseWindow.on("closed", () => {
-    tabManager = undefined;
-  });
-
+function openInitialWindow(): void {
   const initialUrl = pendingLaunchUrl ?? outlineUrl.toString();
   pendingLaunchUrl = undefined;
-  tabManager.createTab(initialUrl);
+  windowManager?.createWindow(initialUrl);
 }
 
 pendingLaunchUrl = findLaunchUrl(process.argv);
@@ -338,11 +327,12 @@ if (!gotSingleInstanceLock) {
     configureIpc();
     const outlineSession = configureOutlineSession();
 
-    createTabbedWindow(outlineSession);
+    windowManager = createWindowManager(outlineSession);
+    openInitialWindow();
 
     app.on("activate", () => {
-      if (!tabManager || tabManager.isDestroyed) {
-        createTabbedWindow(outlineSession);
+      if (!windowManager?.hasWindows) {
+        openInitialWindow();
       } else {
         focusMainWindow();
       }

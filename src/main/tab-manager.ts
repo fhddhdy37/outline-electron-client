@@ -1,15 +1,26 @@
-import { BaseWindow, WebContentsView, ipcMain, shell } from "electron";
+import { BaseWindow, WebContentsView, shell } from "electron";
 import {
-  TAB_ACTIVATE_CHANNEL,
-  TAB_CLOSE_CHANNEL,
-  TAB_CREATE_CHANNEL,
+  TAB_DRAG_ZONE_CHANNEL,
   TAB_STATE_CHANNEL,
+  type TabDragZone,
+  type TabDropRequest,
   type TabState,
 } from "../shared/ipc";
 
 const TAB_BAR_HEIGHT = 40;
 
+/** Tab ids are global so a tab keeps its identity when it moves between windows. */
+let nextTabId = 1;
+
 interface Tab {
+  id: number;
+  view: WebContentsView;
+  /** Removes the listeners this manager attached, so another one can take over. */
+  unwire?: () => void;
+}
+
+/** A tab that has been pulled out of its window and not yet handed to another. */
+export interface DetachedTab {
   id: number;
   view: WebContentsView;
 }
@@ -24,16 +35,26 @@ export interface TabManagerOptions {
   chromeHtml: string;
   /** URL a fresh tab opens. */
   homeUrl: string;
+  /** Window bounds; defaults to a centred window when omitted. */
+  bounds?: Partial<Electron.Rectangle>;
+  /** Keeps the window hidden until the caller shows it. */
+  show?: boolean;
   isAllowedOrigin(url: string): boolean;
   /** Invoked on Ctrl/Cmd+Shift+L (load login link from clipboard). */
   onLoginLinkShortcut?: () => void;
+  /** A tab drag finished in this window's tab bar. */
+  onTabDrop(request: TabDropRequest, manager: TabManager): void;
+  onClosed(manager: TabManager): void;
 }
 
 /**
- * Owns a frameless-content BaseWindow that stacks a tab-bar view on top of one
- * WebContentsView per open Outline page. Only the active tab is visible; the
- * rest stay attached but hidden so their state (scroll, recording) survives a
- * tab switch.
+ * Owns a BaseWindow that stacks a tab-bar view on top of one WebContentsView
+ * per open Outline page. Only the active tab is visible; the rest stay attached
+ * but hidden so their state (scroll, recording) survives a tab switch.
+ *
+ * Tabs are not owned exclusively: `takeTab`/`adoptTab` move a live
+ * WebContentsView to another window without reloading it, which is what tab
+ * drag-out and drag-between-windows are built on.
  */
 export class TabManager {
   private readonly window: BaseWindow;
@@ -41,16 +62,19 @@ export class TabManager {
   private readonly tabs: Tab[] = [];
   private readonly options: TabManagerOptions;
   private activeId: number | undefined;
-  private nextId = 1;
 
   constructor(options: TabManagerOptions) {
     this.options = options;
 
     this.window = new BaseWindow({
-      width: 1440,
-      height: 1000,
+      width: options.bounds?.width ?? 1440,
+      height: options.bounds?.height ?? 1000,
+      ...(options.bounds?.x !== undefined && options.bounds?.y !== undefined
+        ? { x: options.bounds.x, y: options.bounds.y }
+        : {}),
       minWidth: 1024,
       minHeight: 720,
+      show: options.show ?? true,
       title: "Outline Desktop",
     });
 
@@ -67,10 +91,12 @@ export class TabManager {
       `data:text/html;charset=utf-8,${encodeURIComponent(options.chromeHtml)}`,
     );
     this.chromeView.webContents.on("did-finish-load", () => this.broadcast());
+    this.chromeView.webContents.on("before-input-event", (event, input) =>
+      this.handleShortcut(event, input),
+    );
 
-    this.registerIpc();
     this.window.on("resize", () => this.layout());
-    this.window.on("closed", () => this.dispose());
+    this.window.on("closed", () => this.options.onClosed(this));
 
     this.layout();
   }
@@ -83,12 +109,50 @@ export class TabManager {
     return this.window.isDestroyed();
   }
 
+  /** Identifies IPC arriving from this window's tab bar. */
+  get chromeWebContentsId(): number {
+    return this.chromeView.webContents.id;
+  }
+
+  get tabCount(): number {
+    return this.tabs.length;
+  }
+
+  hasTab(id: number): boolean {
+    return this.tabs.some((tab) => tab.id === id);
+  }
+
+  get activeTabId(): number | undefined {
+    return this.activeId;
+  }
+
+  titleOf(id: number): string {
+    const tab = this.tabs.find((candidate) => candidate.id === id);
+    if (!tab || tab.view.webContents.isDestroyed()) {
+      return "새 탭";
+    }
+
+    return tab.view.webContents.getTitle() || "새 탭";
+  }
+
+  /** Screen-space rectangle of the tab strip, used to resolve drag drops. */
+  tabBarScreenBounds(): Electron.Rectangle {
+    const bounds = this.window.getContentBounds();
+    return { x: bounds.x, y: bounds.y, width: bounds.width, height: TAB_BAR_HEIGHT };
+  }
+
   focus(): void {
     if (this.window.isMinimized()) {
       this.window.restore();
     }
     this.window.show();
     this.window.focus();
+  }
+
+  close(): void {
+    if (!this.window.isDestroyed()) {
+      this.window.close();
+    }
   }
 
   createTab(url?: string): void {
@@ -103,7 +167,7 @@ export class TabManager {
       },
     });
 
-    const tab: Tab = { id: this.nextId++, view };
+    const tab: Tab = { id: nextTabId++, view };
     this.wireTab(tab);
     this.window.contentView.addChildView(view);
     this.tabs.push(tab);
@@ -139,6 +203,15 @@ export class TabManager {
     this.broadcast();
   }
 
+  activeWebContents(): Electron.WebContents | undefined {
+    const active = this.tabs.find((tab) => tab.id === this.activeId);
+    if (!active || active.view.webContents.isDestroyed()) {
+      return undefined;
+    }
+
+    return active.view.webContents;
+  }
+
   /** Move the active tab by `direction` (+1 next, -1 previous), wrapping around. */
   cycleTab(direction: 1 | -1): void {
     if (this.tabs.length < 2) {
@@ -152,6 +225,24 @@ export class TabManager {
     this.activate(this.tabs[nextIndex].id);
   }
 
+  /** Places `id` at `toIndex` in the strip. Always re-broadcasts so the tab bar
+   * can drop the optimistic ordering it painted during the drag. */
+  reorderTab(id: number, toIndex: number): void {
+    const from = this.tabs.findIndex((tab) => tab.id === id);
+    if (from === -1) {
+      this.broadcast();
+      return;
+    }
+
+    const target = Math.max(0, Math.min(toIndex, this.tabs.length - 1));
+    if (target !== from) {
+      const [tab] = this.tabs.splice(from, 1);
+      this.tabs.splice(target, 0, tab);
+    }
+
+    this.broadcast();
+  }
+
   closeTab(id: number): void {
     const index = this.tabs.findIndex((tab) => tab.id === id);
     if (index === -1) {
@@ -159,6 +250,7 @@ export class TabManager {
     }
 
     const [tab] = this.tabs.splice(index, 1);
+    tab.unwire?.();
     this.window.contentView.removeChildView(tab.view);
     const wc = tab.view.webContents;
     if (!wc.isDestroyed()) {
@@ -185,6 +277,45 @@ export class TabManager {
     }
   }
 
+  /**
+   * Detaches a tab without destroying it. The caller must hand the result to
+   * `adoptTab` (or close it), otherwise the WebContentsView is orphaned.
+   */
+  takeTab(id: number): DetachedTab | undefined {
+    const index = this.tabs.findIndex((tab) => tab.id === id);
+    if (index === -1) {
+      return undefined;
+    }
+
+    const [tab] = this.tabs.splice(index, 1);
+    tab.unwire?.();
+    tab.unwire = undefined;
+    this.window.contentView.removeChildView(tab.view);
+
+    if (this.activeId === id) {
+      const next = this.tabs[index] ?? this.tabs[index - 1];
+      this.activeId = next?.id;
+      if (next) {
+        this.activate(next.id);
+      }
+    }
+
+    this.broadcast();
+    return { id: tab.id, view: tab.view };
+  }
+
+  /** Takes ownership of a tab detached from another window. */
+  adoptTab(detached: DetachedTab, index?: number): void {
+    const tab: Tab = { id: detached.id, view: detached.view };
+    this.wireTab(tab);
+    this.window.contentView.addChildView(tab.view);
+
+    const target = index === undefined ? this.tabs.length : Math.max(0, Math.min(index, this.tabs.length));
+    this.tabs.splice(target, 0, tab);
+
+    this.activate(tab.id);
+  }
+
   private wireTab(tab: Tab): void {
     const wc = tab.view.webContents;
 
@@ -197,20 +328,37 @@ export class TabManager {
       return { action: "deny" };
     });
 
-    wc.on("will-navigate", (event, url) => {
+    const onWillNavigate = (event: Electron.Event, url: string): void => {
       if (this.options.isAllowedOrigin(url)) {
         return;
       }
       event.preventDefault();
       void shell.openExternal(url);
-    });
+    };
+    const onUpdate = (): void => this.broadcast();
+    const onInput = (event: Electron.Event, input: Electron.Input): void =>
+      this.handleShortcut(event, input);
 
-    wc.on("page-title-updated", () => this.broadcast());
-    wc.on("did-start-loading", () => this.broadcast());
-    wc.on("did-stop-loading", () => this.broadcast());
-    wc.on("did-navigate", () => this.broadcast());
-    wc.on("did-navigate-in-page", () => this.broadcast());
-    wc.on("before-input-event", (event, input) => this.handleShortcut(event, input));
+    wc.on("will-navigate", onWillNavigate);
+    wc.on("page-title-updated", onUpdate);
+    wc.on("did-start-loading", onUpdate);
+    wc.on("did-stop-loading", onUpdate);
+    wc.on("did-navigate", onUpdate);
+    wc.on("did-navigate-in-page", onUpdate);
+    wc.on("before-input-event", onInput);
+
+    tab.unwire = () => {
+      if (wc.isDestroyed()) {
+        return;
+      }
+      wc.off("will-navigate", onWillNavigate);
+      wc.off("page-title-updated", onUpdate);
+      wc.off("did-start-loading", onUpdate);
+      wc.off("did-stop-loading", onUpdate);
+      wc.off("did-navigate", onUpdate);
+      wc.off("did-navigate-in-page", onUpdate);
+      wc.off("before-input-event", onInput);
+    };
   }
 
   private handleShortcut(event: Electron.Event, input: Electron.Input): void {
@@ -280,20 +428,15 @@ export class TabManager {
     this.chromeView.webContents.send(TAB_STATE_CHANNEL, state);
   }
 
-  private registerIpc(): void {
-    // Only one TabManager is alive at a time; clear any stale handlers first.
-    ipcMain.removeAllListeners(TAB_CREATE_CHANNEL);
-    ipcMain.removeAllListeners(TAB_CLOSE_CHANNEL);
-    ipcMain.removeAllListeners(TAB_ACTIVATE_CHANNEL);
-
-    ipcMain.on(TAB_CREATE_CHANNEL, () => this.createTab());
-    ipcMain.on(TAB_CLOSE_CHANNEL, (_event, id: number) => this.closeTab(id));
-    ipcMain.on(TAB_ACTIVATE_CHANNEL, (_event, id: number) => this.activate(id));
+  /** Forwards a drag that ended in this window's tab bar to the window manager. */
+  handleTabDrop(request: TabDropRequest): void {
+    this.options.onTabDrop(request, this);
   }
 
-  private dispose(): void {
-    ipcMain.removeAllListeners(TAB_CREATE_CHANNEL);
-    ipcMain.removeAllListeners(TAB_CLOSE_CHANNEL);
-    ipcMain.removeAllListeners(TAB_ACTIVATE_CHANNEL);
+  /** Tells the tab bar whether the dragged tab has been torn out of the strip. */
+  sendDragZone(zone: TabDragZone): void {
+    if (!this.chromeView.webContents.isDestroyed()) {
+      this.chromeView.webContents.send(TAB_DRAG_ZONE_CHANNEL, zone);
+    }
   }
 }
