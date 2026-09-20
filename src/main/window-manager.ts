@@ -12,9 +12,11 @@ import {
   TAB_DRAG_BEGIN_CHANNEL,
   TAB_DRAG_CANCEL_CHANNEL,
   TAB_DROP_CHANNEL,
+  TAB_OPEN_LINK_CHANNEL,
   type ShortcutSetRequest,
   type ShortcutsSnapshot,
   type TabDropRequest,
+  type TabOpenLinkRequest,
 } from "../shared/ipc";
 import { DragGhost, type GhostMode } from "./drag-ghost";
 import type { ShortcutActionId, ShortcutRegistry } from "./shortcuts";
@@ -389,6 +391,12 @@ export class WindowManager {
     );
   }
 
+  private managerForTabSender(event: Electron.IpcMainEvent): TabManager | undefined {
+    return this.managers.find(
+      (manager) => !manager.isDestroyed && manager.ownsTabWebContents(event.sender.id),
+    );
+  }
+
   private managerForOverlay(event: Electron.IpcMainEvent): TabManager | undefined {
     return this.managers.find(
       (manager) => !manager.isDestroyed && manager.overlayWebContentsId === event.sender.id,
@@ -406,6 +414,17 @@ export class WindowManager {
 
   private registerIpc(): void {
     ipcMain.on(TAB_CREATE_CHANNEL, (event) => this.managerForSender(event)?.createTab());
+    ipcMain.on(TAB_OPEN_LINK_CHANNEL, (event, request: TabOpenLinkRequest) => {
+      const manager = this.managerForTabSender(event);
+      if (
+        manager &&
+        request &&
+        typeof request.url === "string" &&
+        this.options.isAllowedOrigin(request.url)
+      ) {
+        manager.createTab(request.url, !request.background);
+      }
+    });
     ipcMain.on(TAB_CLOSE_CHANNEL, (event, id: number) => this.managerForSender(event)?.closeTab(id));
     ipcMain.on(TAB_ACTIVATE_CHANNEL, (event, id: number) =>
       this.managerForSender(event)?.activate(id),

@@ -7,6 +7,8 @@ export const APP_INFO_CHANNEL = "outline-meeting:get-app-info";
 export const TAB_STATE_CHANNEL = "tabs:state";
 /** Tab-bar → main: open a new tab. */
 export const TAB_CREATE_CHANNEL = "tabs:create";
+/** Outline page → main: open an in-app link in another tab. */
+export const TAB_OPEN_LINK_CHANNEL = "tabs:open-link";
 /** Tab-bar → main: close the tab with the given id. */
 export const TAB_CLOSE_CHANNEL = "tabs:close";
 /** Tab-bar → main: activate (bring to front) the tab with the given id. */
@@ -46,6 +48,12 @@ export interface TabDropRequest {
   id: number;
   /** Index the tab should end up at when it is dropped back on its own tab bar. */
   toIndex: number;
+}
+
+export interface TabOpenLinkRequest {
+  url: string;
+  /** Chrome-style Ctrl/Cmd+click opens without leaving the current tab. */
+  background: boolean;
 }
 
 /** Shortcut window → main: read every action and its current binding. */

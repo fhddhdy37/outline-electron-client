@@ -236,7 +236,7 @@ export class TabManager {
     }
   }
 
-  createTab(url?: string): void {
+  createTab(url?: string, activate = true): void {
     const view = new WebContentsView({
       webPreferences: {
         preload: this.options.preloadPath,
@@ -254,7 +254,12 @@ export class TabManager {
     this.tabs.push(tab);
 
     void view.webContents.loadURL(url ?? this.options.homeUrl);
-    this.activate(tab.id);
+    if (activate || this.activeId === undefined) {
+      this.activate(tab.id);
+    } else {
+      view.setVisible(false);
+      this.broadcast();
+    }
   }
 
   /** Loads a URL in the active tab, or opens a new tab if there is none. */
@@ -401,9 +406,9 @@ export class TabManager {
   private wireTab(tab: Tab): void {
     const wc = tab.view.webContents;
 
-    wc.setWindowOpenHandler(({ url }) => {
+    wc.setWindowOpenHandler(({ url, disposition }) => {
       if (this.options.isAllowedOrigin(url)) {
-        this.createTab(url);
+        this.createTab(url, disposition !== "background-tab");
       } else {
         void shell.openExternal(url);
       }
@@ -441,6 +446,11 @@ export class TabManager {
       wc.off("did-navigate-in-page", onUpdate);
       wc.off("before-input-event", onInput);
     };
+  }
+
+  /** True when IPC originated from one of this window's Outline page tabs. */
+  ownsTabWebContents(id: number): boolean {
+    return this.tabs.some((tab) => !tab.view.webContents.isDestroyed() && tab.view.webContents.id === id);
   }
 
   private handleShortcut(event: Electron.Event, input: Electron.Input): void {
