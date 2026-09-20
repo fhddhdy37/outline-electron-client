@@ -12,6 +12,7 @@ import { ShortcutRegistry } from "./shortcuts";
 import { WindowManager } from "./window-manager";
 import { CHROME_HTML } from "./chrome-html";
 import { SHORTCUTS_HTML } from "./shortcuts-html";
+import { configureAutoUpdate } from "./auto-update";
 
 const OUTLINE_PARTITION = "persist:outline-client";
 const OUTLINE_URL_ARG = "--outline-url=";
@@ -333,6 +334,7 @@ if (!gotSingleInstanceLock) {
 
     windowManager = createWindowManager(outlineSession);
     openInitialWindow();
+    configureAutoUpdate();
 
     app.on("activate", () => {
       if (!windowManager?.hasWindows) {
