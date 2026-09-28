@@ -216,7 +216,11 @@ function configureOutlineSession(): Electron.Session {
 
   outlineSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
     const permissionName = String(permission);
-    if (permissionName === "media" || permissionName === "display-capture") {
+    if (
+      permissionName === "media" ||
+      permissionName === "display-capture" ||
+      permissionName === "fullscreen"
+    ) {
       return isAllowedOutlineOrigin(requestingOrigin);
     }
 
@@ -228,7 +232,9 @@ function configureOutlineSession(): Electron.Session {
     const requestingUrl = details.requestingUrl || webContents.getURL();
     const allowed =
       isAllowedOutlineOrigin(requestingUrl) &&
-      (permissionName === "media" || permissionName === "display-capture");
+      (permissionName === "media" ||
+        permissionName === "display-capture" ||
+        permissionName === "fullscreen");
 
     callback(allowed);
   });

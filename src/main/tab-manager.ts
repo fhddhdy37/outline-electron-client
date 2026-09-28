@@ -17,6 +17,7 @@ let nextTabId = 1;
 interface Tab {
   id: number;
   view: WebContentsView;
+  htmlFullscreen?: boolean;
   /** Removes the listeners this manager attached, so another one can take over. */
   unwire?: () => void;
 }
@@ -106,6 +107,8 @@ export class TabManager {
     );
 
     this.window.on("resize", () => this.layout());
+    this.window.on("enter-full-screen", () => this.layout());
+    this.window.on("leave-full-screen", () => this.layout());
     this.window.on("closed", () => this.options.onClosed(this));
 
     this.layout();
@@ -425,6 +428,20 @@ export class TabManager {
     const onUpdate = (): void => this.broadcast();
     const onInput = (event: Electron.Event, input: Electron.Input): void =>
       this.handleShortcut(event, input);
+    // Electron owns the native window transition; we only resize our child views.
+    const onEnterFullscreen = (): void => {
+      tab.htmlFullscreen = true;
+      if (tab.id === this.activeId) {
+        this.closeOverlay();
+      }
+      this.layout();
+    };
+    const onLeaveFullscreen = (): void => {
+      tab.htmlFullscreen = false;
+      if (!this.window.isDestroyed()) {
+        this.layout();
+      }
+    };
 
     wc.on("will-navigate", onWillNavigate);
     wc.on("page-title-updated", onUpdate);
@@ -433,6 +450,10 @@ export class TabManager {
     wc.on("did-navigate", onUpdate);
     wc.on("did-navigate-in-page", onUpdate);
     wc.on("before-input-event", onInput);
+    wc.on("enter-html-full-screen", onEnterFullscreen);
+    wc.on("leave-html-full-screen", onLeaveFullscreen);
+    wc.on("render-process-gone", onLeaveFullscreen);
+    wc.on("destroyed", onLeaveFullscreen);
 
     tab.unwire = () => {
       if (wc.isDestroyed()) {
@@ -445,6 +466,10 @@ export class TabManager {
       wc.off("did-navigate", onUpdate);
       wc.off("did-navigate-in-page", onUpdate);
       wc.off("before-input-event", onInput);
+      wc.off("enter-html-full-screen", onEnterFullscreen);
+      wc.off("leave-html-full-screen", onLeaveFullscreen);
+      wc.off("render-process-gone", onLeaveFullscreen);
+      wc.off("destroyed", onLeaveFullscreen);
     };
   }
 
@@ -454,6 +479,14 @@ export class TabManager {
   }
 
   private handleShortcut(event: Electron.Event, input: Electron.Input): void {
+    // Let Chromium handle Escape even if the user bound it to an app action.
+    if (
+      input.key === "Escape" &&
+      this.tabs.some((tab) => tab.id === this.activeId && tab.htmlFullscreen)
+    ) {
+      return;
+    }
+
     const action = this.options.resolveShortcut(input);
     if (!action) {
       return;
@@ -485,15 +518,17 @@ export class TabManager {
 
   private layout(): void {
     const { width, height } = this.window.getContentBounds();
+    const active = this.tabs.find((tab) => tab.id === this.activeId);
+    const tabBarHeight = active?.htmlFullscreen ? 0 : TAB_BAR_HEIGHT;
+    this.chromeView.setVisible(!active?.htmlFullscreen);
     this.chromeView.setBounds({ x: 0, y: 0, width, height: TAB_BAR_HEIGHT });
 
     const body = {
       x: 0,
-      y: TAB_BAR_HEIGHT,
+      y: tabBarHeight,
       width,
-      height: Math.max(0, height - TAB_BAR_HEIGHT),
+      height: Math.max(0, height - tabBarHeight),
     };
-    const active = this.tabs.find((tab) => tab.id === this.activeId);
     active?.view.setBounds(body);
 
     if (this.overlayOpen) {
